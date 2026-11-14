@@ -62,7 +62,9 @@ public class NovelVoiceTtsPlugin extends Plugin implements TextToSpeech.OnInitLi
             tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
                 @Override
                 public void onStart(String utteranceId) {
-                    // Handled on JS side via speak resolution
+                    JSObject payload = new JSObject();
+                    payload.put("utteranceId", utteranceId);
+                    notifyListeners("utteranceStart", payload);
                 }
 
                 @Override
@@ -92,6 +94,22 @@ public class NovelVoiceTtsPlugin extends Plugin implements TextToSpeech.OnInitLi
     }
 
     @PluginMethod
+    public void getEngineInfo(PluginCall call) {
+        JSObject ret = new JSObject();
+        int maxLen = TextToSpeech.getMaxSpeechInputLength();
+        if (maxLen <= 0) maxLen = 3500;
+        String defaultEngine = tts != null ? tts.getDefaultEngine() : "";
+        boolean ssmlSupported = defaultEngine != null && (
+            defaultEngine.contains("com.google.android.tts") ||
+            defaultEngine.contains("com.samsung.SMT")
+        );
+        ret.put("maxSpeechInputLength", maxLen);
+        ret.put("ssmlSupported", ssmlSupported);
+        ret.put("enginePackage", defaultEngine != null ? defaultEngine : "");
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void getVoices(PluginCall call) {
         JSArray voicesArray = new JSArray();
         if (ttsReady && tts != null) {
@@ -114,18 +132,16 @@ public class NovelVoiceTtsPlugin extends Plugin implements TextToSpeech.OnInitLi
     }
 
     @PluginMethod
-    public void speak(PluginCall call) {
+    public void configureSession(PluginCall call) {
         if (!ttsReady || tts == null) {
             call.reject("TTS engine not initialized");
             return;
         }
-        String text = call.getString("text", "");
         String voiceURI = call.getString("voiceURI", "");
         float rate = call.getFloat("rate", 1.0f);
         float pitch = call.getFloat("pitch", 1.0f);
-        String utteranceId = call.getString("utteranceId", "utt_" + System.currentTimeMillis());
 
-        tts.setSpeechRate(Math.max(0.4f, Math.min(2.5f, rate)));
+        tts.setSpeechRate(Math.max(0.4f, Math.min(3.5f, rate)));
         tts.setPitch(Math.max(0.5f, Math.min(2.0f, pitch)));
 
         if (voiceURI != null && !voiceURI.isEmpty()) {
@@ -139,10 +155,35 @@ public class NovelVoiceTtsPlugin extends Plugin implements TextToSpeech.OnInitLi
                 }
             }
         }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void speak(PluginCall call) {
+        if (!ttsReady || tts == null) {
+            call.reject("TTS engine not initialized");
+            return;
+        }
+        String text = call.getString("text", "");
+        String utteranceId = call.getString("utteranceId", "utt_" + System.currentTimeMillis());
+        int queueMode = call.getInt("queueMode", TextToSpeech.QUEUE_ADD);
+        int androidQueueMode = (queueMode == 0) ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
 
         Bundle params = new Bundle();
         params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId);
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+        tts.speak(text, androidQueueMode, params, utteranceId);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void playSilent(PluginCall call) {
+        if (!ttsReady || tts == null) {
+            call.resolve();
+            return;
+        }
+        long durationMs = call.getInt("durationMs", 300);
+        String utteranceId = call.getString("utteranceId", "sil_" + System.currentTimeMillis());
+        tts.playSilentUtterance(Math.max(0L, durationMs), TextToSpeech.QUEUE_ADD, utteranceId);
         call.resolve();
     }
 

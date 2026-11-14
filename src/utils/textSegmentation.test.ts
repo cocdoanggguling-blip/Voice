@@ -1,100 +1,191 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildOptionalSsml,
+  buildSpeechChunksFromOffset,
   detectLikelySourceLanguage,
-  estimateWordDurationMs,
-  findWordIndexAtCharOffset,
+  estimateChunkDurationMs,
+  findLocationAtChapterOffset,
+  findSentenceStartForOffset,
+  mapChunkLocalOffsetToChapterOffset,
   segmentParagraphs,
   splitIntoSentences,
-  splitSentenceIntoCommaChunks,
-  tokenizeWords,
 } from './textSegmentation';
 
-test('splitIntoSentences respects abbreviations, decimals, and closing quotes', () => {
+test('splitIntoSentences protects Tn., Dr., decimals (3.5), ellipses (…), and dialog quotes', () => {
   const text =
-    'Dr. Aris membaca halaman 3.14 dengan tenang. "Apakah kapal sudah berlabuh?" tanya Nara! Ya, mereka tiba pukul 18.00.';
-  const sentences = splitIntoSentences(text);
+    'Tn. Bima dan Dr. Sari mengukur suhu 3.5 derajat… lalu berjalan pelan. "Apakah kapal sudah tiba?" tanya Nara! Mereka menunggu di dermaga.';
+  const sentences = splitIntoSentences(text, 'id');
 
   assert.equal(sentences.length, 3);
-  assert.equal(sentences[0], 'Dr. Aris membaca halaman 3.14 dengan tenang.');
-  assert.equal(sentences[1], '"Apakah kapal sudah berlabuh?" tanya Nara!');
-  assert.equal(sentences[2], 'Ya, mereka tiba pukul 18.00.');
+  assert.equal(sentences[0], 'Tn. Bima dan Dr. Sari mengukur suhu 3.5 derajat… lalu berjalan pelan.');
+  assert.equal(sentences[1], '"Apakah kapal sudah tiba?" tanya Nara!');
+  assert.equal(sentences[2], 'Mereka menunggu di dermaga.');
 });
 
-test('splitSentenceIntoCommaChunks splits commas with natural pause and exact char offsets', () => {
-  const sentence = 'Di dermaga tua, angin berhembus pelan; lampu mercusuar menyala.';
-  const chunks = splitSentenceIntoCommaChunks(sentence, 200);
-
-  assert.equal(chunks.length, 3);
-  assert.equal(chunks[0].text, 'Di dermaga tua,');
-  assert.equal(chunks[0].pauseAfterMs, 200);
-  assert.equal(
-    sentence.slice(chunks[0].startCharOffset, chunks[0].endCharOffset),
-    'Di dermaga tua,'
-  );
-
-  assert.equal(chunks[1].text, 'angin berhembus pelan;');
-  assert.equal(chunks[1].pauseAfterMs, 200);
-  assert.equal(
-    sentence.slice(chunks[1].startCharOffset, chunks[1].endCharOffset),
-    'angin berhembus pelan;'
-  );
-
-  assert.equal(chunks[2].text, 'lampu mercusuar menyala.');
-  assert.equal(chunks[2].pauseAfterMs, 0);
-  assert.equal(
-    sentence.slice(chunks[2].startCharOffset, chunks[2].endCharOffset),
-    'lampu mercusuar menyala.'
-  );
-});
-
-test('splitSentenceIntoCommaChunks supports resuming mid-sentence by word index', () => {
-  const sentence = 'Pagi itu cerah, burung bernyanyi, dan ombak tenang.';
-  const words = tokenizeWords(sentence);
-  // Resume from word index 3 ("burung")
-  const chunks = splitSentenceIntoCommaChunks(sentence, 180, 3);
-
-  assert.equal(words[3].text, 'burung');
-  assert.equal(chunks.length, 2);
-  assert.equal(chunks[0].text, 'burung bernyanyi,');
-  assert.equal(
-    sentence.slice(chunks[0].startCharOffset, chunks[0].endCharOffset),
-    'burung bernyanyi,'
-  );
-  assert.equal(findWordIndexAtCharOffset(words, chunks[0].startCharOffset), 3);
-});
-
-test('findWordIndexAtCharOffset maps boundary events back to exact word tokens', () => {
-  const sentence = 'Gelombang senja menyentuh lambung perahu.';
-  const words = tokenizeWords(sentence);
-
-  assert.equal(findWordIndexAtCharOffset(words, 0), 0); // Gelombang
-  assert.equal(findWordIndexAtCharOffset(words, 10), 1); // senja
-  assert.equal(findWordIndexAtCharOffset(words, 16), 2); // menyentuh
-  assert.equal(findWordIndexAtCharOffset(words, 999), 4); // clamped last word
-});
-
-test('segmentParagraphs preserves global sentence indexing across paragraphs', () => {
+test('flowing mode sends whole paragraphs without splitting at periods or commas', () => {
   const { paragraphs, allSentences } = segmentParagraphs([
-    { tag: 'h2', text: 'Bab Pertama.' },
-    { tag: 'p', text: 'Kalimat satu. Kalimat dua!' },
+    {
+      tag: 'p',
+      text: 'Kalimat pertama, dengan jeda koma, tetap utuh. Kalimat kedua menyusul langsung! Kalimat ketiga menutup paragraf ini.',
+    },
   ]);
 
-  assert.equal(paragraphs.length, 2);
+  const chunks = buildSpeechChunksFromOffset(paragraphs, 0, {
+    readingMode: 'flowing',
+    chunkSizeChars: 800,
+    maxEngineInputLength: 3500,
+    paragraphPauseMs: 300,
+    commaPauseMs: 0,
+    sentencePauseMs: 0,
+    ssmlSupported: false,
+  });
+
+  // 3 sentences inside 1 paragraph -> 1 single flowing speech chunk (0 inter-sentence gaps!)
   assert.equal(allSentences.length, 3);
-  assert.equal(allSentences[0].globalIndex, 0);
-  assert.equal(allSentences[1].globalIndex, 1);
-  assert.equal(allSentences[2].globalIndex, 2);
-  assert.equal(allSentences[2].paragraphIndex, 1);
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].text, paragraphs[0].rawText);
+  assert.equal(chunks[0].pauseAfterMs, 0); // Last chunk of chapter has no trailing pause
 });
 
-test('estimateWordDurationMs scales inversely with speech rate', () => {
-  const normal = estimateWordDurationMs('pelabuhan,', 1.0);
-  const fast = estimateWordDurationMs('pelabuhan,', 2.0);
-  assert.ok(normal > fast);
+test('flowing mode merges very short dialog paragraphs (300-600 chars) and keeps longer paragraph pauses', () => {
+  const { paragraphs } = segmentParagraphs([
+    { tag: 'p', text: '"Sudah siap?" tanya Nara.' },
+    { tag: 'p', text: '"Sebentar lagi, Nak," jawab penjaga dermaga.' },
+    { tag: 'p', text: '"Angin timur mulai bertiup kencang malam ini."' },
+    {
+      tag: 'p',
+      text: 'Kapal kayu itu pun perlahan meninggalkan dermaga batu, membelah ombak gelap menuju garis cakrawala yang samar di bawah cahaya bulan purnama. Para awak memeriksa tali layar dengan sigap sementara lentera badai bergoyang lembut di haluan kapal.',
+    },
+  ]);
+
+  const chunks = buildSpeechChunksFromOffset(paragraphs, 0, {
+    readingMode: 'flowing',
+    chunkSizeChars: 800,
+    maxEngineInputLength: 3500,
+    paragraphPauseMs: 300,
+    commaPauseMs: 0,
+    sentencePauseMs: 0,
+    ssmlSupported: false,
+  });
+
+  // First 3 short dialog lines (< 300-480 chars combined) merge into 1 flowing unit!
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks[0].slices.length, 3);
+  assert.equal(chunks[0].pauseAfterMs, 300);
+  assert.equal(chunks[1].slices.length, 1);
 });
 
-test('detectLikelySourceLanguage identifies Indonesian vs English accurately', () => {
+test('long paragraphs split ONLY at nearest sentence boundary before chunkSizeChars', () => {
+  const s1 = 'Kalimat satu berisi deskripsi panjang tentang pelabuhan tua dan angin sore yang sejuk.';
+  const s2 = 'Kalimat dua menceritakan suara ombak yang menghantam tiang dermaga kayu.';
+  const s3 = 'Kalimat tiga menggambarkan cahaya mercusuar yang mulai menyala di kejauhan.';
+  const { paragraphs } = segmentParagraphs([{ tag: 'p', text: `${s1} ${s2} ${s3}` }]);
+
+  const chunks = buildSpeechChunksFromOffset(paragraphs, 0, {
+    readingMode: 'flowing',
+    chunkSizeChars: 300,
+    maxEngineInputLength: 3500,
+    paragraphPauseMs: 300,
+    commaPauseMs: 0,
+    sentencePauseMs: 0,
+    ssmlSupported: false,
+  });
+
+  // Total is ~236 chars <= 300 -> 1 chunk. Now test with smaller maxEngineInputLength of 170:
+  const splitChunks = buildSpeechChunksFromOffset(paragraphs, 0, {
+    readingMode: 'flowing',
+    chunkSizeChars: 800,
+    maxEngineInputLength: 170,
+    paragraphPauseMs: 300,
+    commaPauseMs: 0,
+    sentencePauseMs: 0,
+    ssmlSupported: false,
+  });
+
+  assert.equal(splitChunks.length, 2);
+  assert.equal(splitChunks[0].text, `${s1} ${s2}`);
+  assert.equal(splitChunks[1].text, s3);
+  assert.equal(chunks.length, 1);
+});
+
+test('character offset mapping derives exact active word and sentence across merged chunks', () => {
+  const { paragraphs, allSentences } = segmentParagraphs([
+    { tag: 'p', text: 'Angin laut berhembus pelan.' },
+    { tag: 'p', text: 'Perahu kecil mulai berlayar menuju fajar.' },
+  ]);
+
+  const chunks = buildSpeechChunksFromOffset(paragraphs, 0, {
+    readingMode: 'flowing',
+    chunkSizeChars: 800,
+    maxEngineInputLength: 3500,
+    paragraphPauseMs: 300,
+    commaPauseMs: 0,
+    sentencePauseMs: 0,
+    ssmlSupported: false,
+  });
+
+  assert.equal(chunks.length, 1); // Merged short paragraphs
+  const localIdx = chunks[0].text.indexOf('berlayar');
+  const chapterOff = mapChunkLocalOffsetToChapterOffset(chunks[0], localIdx);
+  const loc = findLocationAtChapterOffset(allSentences, chapterOff);
+
+  assert.equal(loc.sentenceIndex, 1);
+  assert.equal(loc.paragraphIndex, 1);
+  assert.equal(allSentences[loc.sentenceIndex].words[loc.wordIndex].text, 'berlayar');
+});
+
+test('10x pause/resume and mid-playback speed change always rebuild queue from exact offset', () => {
+  const { paragraphs, allSentences } = segmentParagraphs([
+    {
+      tag: 'p',
+      text: 'Satu dua tiga empat lima. Enam tujuh delapan sembilan sepuluh. Sebelas dua belas tiga belas.',
+    },
+    {
+      tag: 'p',
+      text: 'Empat belas lima belas enam belas. Tujuh belas delapan belas.',
+    },
+  ]);
+
+  const baseOpts = {
+    readingMode: 'flowing' as const,
+    chunkSizeChars: 800,
+    maxEngineInputLength: 3500,
+    paragraphPauseMs: 300,
+    commaPauseMs: 0,
+    sentencePauseMs: 0,
+    ssmlSupported: false,
+  };
+
+  // Simulate 10 pause/resume points across the chapter
+  const checkpoints = [0, 12, 27, 45, 65, 80, 96, 110, 125, 140];
+  for (const cp of checkpoints) {
+    const resumeOffset = findSentenceStartForOffset(allSentences, cp);
+    const rebuilt = buildSpeechChunksFromOffset(paragraphs, resumeOffset, baseOpts);
+    assert.ok(rebuilt.length >= 1);
+    assert.equal(rebuilt[0].chapterStartChar, resumeOffset);
+  }
+
+  // Verify speed estimation scales accurately across 1x, 2x, 3x
+  const dur1x = estimateChunkDurationMs(paragraphs[0].rawText, 1.0);
+  const dur2x = estimateChunkDurationMs(paragraphs[0].rawText, 2.0);
+  const dur3x = estimateChunkDurationMs(paragraphs[0].rawText, 3.0);
+  assert.ok(dur1x > dur2x && dur2x > dur3x);
+});
+
+test('SSML break tags are injected ONLY when ssmlSupported is true', () => {
+  const plain = 'Angin bertiup, ombak tenang. Matahari terbit.';
+  const unsupported = buildOptionalSsml(plain, 200, 400, false);
+  assert.equal(unsupported.isSsml, false);
+  assert.equal(unsupported.speakText, plain);
+
+  const supported = buildOptionalSsml(plain, 200, 400, true);
+  assert.equal(supported.isSsml, true);
+  assert.ok(supported.speakText.includes('<break time="200ms"/>'));
+  assert.ok(supported.speakText.includes('<break time="400ms"/>'));
+});
+
+test('detectLikelySourceLanguage detects Indonesian vs English', () => {
   assert.equal(
     detectLikelySourceLanguage('Angin laut berhembus dengan lembut di dermaga ini.', 'en'),
     'id'

@@ -51,9 +51,13 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
 export const DEFAULT_TTS_SETTINGS: TtsSettings = {
   voiceURI: '',
   langFilter: 'all',
+  readingMode: 'flowing',
+  chunkSizeChars: 800,
   rate: 1.0,
   pitch: 1.0,
-  commaPauseMs: 180,
+  paragraphPauseMs: 300,
+  commaPauseMs: 0,
+  sentencePauseMs: 0,
   sleepTimerMinutes: 0,
 };
 

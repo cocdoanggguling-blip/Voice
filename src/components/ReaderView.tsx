@@ -18,6 +18,7 @@ import { translateText } from '../services/translationService';
 import {
   checkAndroidNotificationPermission,
   getSystemVoices,
+  getTtsEngineCapabilities,
   openNativeTtsSettings,
   requestAndroidNotificationPermission,
   TtsPlaybackController,
@@ -32,9 +33,11 @@ import type {
   TargetLanguageCode,
   TocItem,
   TranslationResult,
+  TtsEngineCapabilities,
   TtsSettings,
   TtsVoiceInfo,
 } from '../types/reader';
+import { findLocationAtChapterOffset } from '../utils/textSegmentation';
 import { AppearanceSheet } from './AppearanceSheet';
 import { ReaderControlsBar } from './ReaderControlsBar';
 import { TocDrawer } from './TocDrawer';
@@ -68,6 +71,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [allSentences, setAllSentences] = useState<SentenceSegment[]>([]);
   const [activeSentenceIdx, setActiveSentenceIdx] = useState<number>(0);
   const [activeWordIdx, setActiveWordIdx] = useState<number>(0);
+  const [activeCharOffset, setActiveCharOffset] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoadingBook, setIsLoadingBook] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -81,8 +85,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [ttsSheetOpen, setTtsSheetOpen] = useState(false);
 
-  // Voices & Permissions
+  // Voices, Engine Capabilities & Permissions
   const [voices, setVoices] = useState<TtsVoiceInfo[]>([]);
+  const [engineCapabilities, setEngineCapabilities] = useState<TtsEngineCapabilities>({
+    maxSpeechInputLength: 3500,
+    ssmlSupported: false,
+  });
   const [notificationStatus, setNotificationStatus] = useState<NotificationPermissionStatus>({
     granted: true,
     sdkInt: 0,
@@ -106,18 +114,21 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const chaptersRef = useRef(chapters);
   const activeSentenceRef = useRef(activeSentenceIdx);
   const activeWordRef = useRef(activeWordIdx);
+  const activeOffsetRef = useRef(activeCharOffset);
 
   chapterIndexRef.current = chapterIndex;
   chaptersRef.current = chapters;
   activeSentenceRef.current = activeSentenceIdx;
   activeWordRef.current = activeWordIdx;
+  activeOffsetRef.current = activeCharOffset;
 
-  // Persist reading position helper
+  // Persist reading position helper (stores chapter character offset + derived sentence/word)
   const persistPosition = useCallback(
-    async (cIdx: number, sIdx: number, wIdx: number, totalChaps: number) => {
+    async (cIdx: number, charOffset: number, sIdx: number, wIdx: number, totalChaps: number) => {
       await saveReadingPosition({
         bookId: bookMeta.id,
         chapterIndex: cIdx,
+        charOffset,
         sentenceIndex: sIdx,
         wordIndex: wIdx,
         scrollRatio: 0,
@@ -146,9 +157,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   // Initialize TTS controller once
   useEffect(() => {
     const controller = new TtsPlaybackController(ttsSettings, {
-      onHighlight: (sIdx, wIdx) => {
+      onHighlight: (sIdx, wIdx, charOffset) => {
         setActiveSentenceIdx(sIdx);
         setActiveWordIdx(wIdx);
+        setActiveCharOffset(charOffset);
       },
       onPlaybackStateChange: (playing) => {
         setIsPlaying(playing);
@@ -156,6 +168,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           const pos = controller.getPosition();
           void persistPosition(
             chapterIndexRef.current,
+            pos.charOffset,
             pos.sentenceIndex,
             pos.wordIndex,
             chaptersRef.current.length || bookMeta.totalChapters
@@ -176,6 +189,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     controllerRef.current = controller;
 
     void getSystemVoices().then(setVoices);
+    void getTtsEngineCapabilities().then((caps) => {
+      setEngineCapabilities(caps);
+      controller.setCapabilities(caps);
+    });
     void checkAndroidNotificationPermission().then(setNotificationStatus);
 
     return () => {
@@ -183,6 +200,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       void saveReadingPosition({
         bookId: bookMeta.id,
         chapterIndex: chapterIndexRef.current,
+        charOffset: pos.charOffset,
         sentenceIndex: pos.sentenceIndex,
         wordIndex: pos.wordIndex,
         scrollRatio: 0,
@@ -194,12 +212,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookMeta.id]);
 
-  // Keep controller settings synced
+  // Keep controller settings synced (triggers immediate mid-playback requeue if rate/mode changed)
   useEffect(() => {
     controllerRef.current?.updateSettings(ttsSettings);
   }, [ttsSettings]);
 
-  // Open EPUB binary from IndexedDB and restore exact chapter + sentence + word
+  // Open EPUB binary from IndexedDB and restore exact chapter + charOffset
   useEffect(() => {
     let cancelled = false;
     let instanceToDestroy: OpenedEpubBook | null = null;
@@ -228,27 +246,34 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           ? Math.min(savedPos.chapterIndex, Math.max(0, opened.chapters.length - 1))
           : Math.min(bookMeta.currentChapterIndex || 0, Math.max(0, opened.chapters.length - 1));
 
-        const segs = await loadChapterSegments(opened.book, startChap);
+        const segs = await loadChapterSegments(opened.book, startChap, bookMeta.language || 'id');
         if (cancelled) return;
 
-        const startSentence = savedPos
-          ? Math.min(savedPos.sentenceIndex, Math.max(0, segs.allSentences.length - 1))
-          : 0;
-        const startWord = savedPos ? savedPos.wordIndex : 0;
+        let initialOffset = 0;
+        if (savedPos && typeof savedPos.charOffset === 'number' && savedPos.charOffset > 0) {
+          initialOffset = savedPos.charOffset;
+        } else if (savedPos && savedPos.sentenceIndex > 0 && segs.allSentences.length > 0) {
+          const fallbackSent =
+            segs.allSentences[Math.min(savedPos.sentenceIndex, segs.allSentences.length - 1)];
+          initialOffset = fallbackSent?.chapterStartChar ?? 0;
+        }
+
+        const loc = findLocationAtChapterOffset(segs.allSentences, initialOffset);
 
         setChapterIndex(startChap);
         setParagraphs(segs.paragraphs);
         setAllSentences(segs.allSentences);
-        setActiveSentenceIdx(startSentence);
-        setActiveWordIdx(startWord);
+        setActiveSentenceIdx(loc.sentenceIndex);
+        setActiveWordIdx(loc.wordIndex);
+        setActiveCharOffset(loc.chapterOffset);
 
         const chapTitle = opened.chapters[startChap]?.title || segs.chapterTitle || `Bab ${startChap + 1}`;
         controllerRef.current?.setBookContext(
           bookMeta.title,
           chapTitle,
+          segs.paragraphs,
           segs.allSentences,
-          startSentence,
-          startWord
+          loc.chapterOffset
         );
       } catch (err) {
         if (!cancelled) {
@@ -265,7 +290,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       cancelled = true;
       instanceToDestroy?.book.destroy();
     };
-  }, [bookMeta.id, bookMeta.title, bookMeta.currentChapterIndex]);
+  }, [bookMeta.id, bookMeta.title, bookMeta.language, bookMeta.currentChapterIndex]);
 
   const handleSelectChapter = useCallback(
     async (targetIndex: number, autoPlayAfterLoad = false) => {
@@ -273,27 +298,34 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       const clamped = Math.max(0, Math.min(targetIndex, openedEpub.chapters.length - 1));
       controllerRef.current?.pause();
 
-      const segs = await loadChapterSegments(openedEpub.book, clamped);
+      const segs = await loadChapterSegments(openedEpub.book, clamped, bookMeta.language || 'id');
       setChapterIndex(clamped);
       setParagraphs(segs.paragraphs);
       setAllSentences(segs.allSentences);
       setActiveSentenceIdx(0);
       setActiveWordIdx(0);
+      setActiveCharOffset(0);
       setPageIndex(0);
       setInlineTranslations({});
       setSelectedSentenceIdx(null);
 
       const chapTitle =
         openedEpub.chapters[clamped]?.title || segs.chapterTitle || `Bab ${clamped + 1}`;
-      controllerRef.current?.setBookContext(bookMeta.title, chapTitle, segs.allSentences, 0, 0);
+      controllerRef.current?.setBookContext(
+        bookMeta.title,
+        chapTitle,
+        segs.paragraphs,
+        segs.allSentences,
+        0
+      );
 
-      await persistPosition(clamped, 0, 0, openedEpub.chapters.length);
+      await persistPosition(clamped, 0, 0, 0, openedEpub.chapters.length);
 
       if (autoPlayAfterLoad && segs.allSentences.length > 0) {
-        void controllerRef.current?.playFrom(0, 0);
+        void controllerRef.current?.playFromOffset(0);
       }
     },
-    [bookMeta.title, openedEpub, persistPosition]
+    [bookMeta.language, bookMeta.title, openedEpub, persistPosition]
   );
 
   // Auto-scroll to highlighted sentence during TTS playback & switch page if paginated
@@ -372,7 +404,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
   const handleReadFromSentence = (sentenceIdx: number) => {
     setSelectedSentenceIdx(null);
-    void controllerRef.current?.playFrom(sentenceIdx, 0);
+    void controllerRef.current?.playFromSentence(sentenceIdx);
   };
 
   const handleTogglePlay = () => {
@@ -380,7 +412,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     if (isPlaying) {
       controllerRef.current.pause();
     } else {
-      // Request Android 13+ notification permission lazily if needed on native
       if (notificationStatus.isNative && !notificationStatus.granted) {
         void requestAndroidNotificationPermission().then((granted) => {
           setNotificationStatus((prev) => ({ ...prev, granted }));
@@ -419,6 +450,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 controllerRef.current?.pause();
                 void persistPosition(
                   chapterIndexRef.current,
+                  activeOffsetRef.current,
                   activeSentenceRef.current,
                   activeWordRef.current,
                   chapters.length || bookMeta.totalChapters
@@ -632,14 +664,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                     if (pageIndex > 0) setPageIndex((p) => p - 1);
                     else if (chapterIndex > 0) void handleSelectChapter(chapterIndex - 1);
                   }}
-                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium disabled:opacity-40"
+                  className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-[var(--nv-border)] px-3 sm:px-4 text-xs sm:text-sm font-medium disabled:opacity-40 whitespace-nowrap shrink-0"
                 >
-                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                  <ChevronLeft className="h-4 w-4 shrink-0" aria-hidden="true" />
                   <span>Sebelumnya</span>
                 </button>
 
-                <span className="text-xs font-medium text-[var(--nv-muted)] tabular-nums">
-                  Halaman {pageIndex + 1} / {totalPages}
+                <span className="text-xs font-medium text-[var(--nv-muted)] tabular-nums whitespace-nowrap shrink-0">
+                  Hal {pageIndex + 1} / {totalPages}
                 </span>
 
                 <button
@@ -650,10 +682,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                     else if (chapterIndex < chapters.length - 1)
                       void handleSelectChapter(chapterIndex + 1);
                   }}
-                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium disabled:opacity-40"
+                  className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-[var(--nv-border)] px-3 sm:px-4 text-xs sm:text-sm font-medium disabled:opacity-40 whitespace-nowrap shrink-0"
                 >
                   <span>Berikutnya</span>
-                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                  <ChevronRight className="h-4 w-4 shrink-0" aria-hidden="true" />
                 </button>
               </>
             ) : (
@@ -662,13 +694,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   type="button"
                   disabled={chapterIndex <= 0}
                   onClick={() => void handleSelectChapter(chapterIndex - 1)}
-                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium disabled:opacity-40"
+                  className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-[var(--nv-border)] px-3 sm:px-4 text-xs sm:text-sm font-medium disabled:opacity-40 whitespace-nowrap shrink-0"
                 >
-                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                  <ChevronLeft className="h-4 w-4 shrink-0" aria-hidden="true" />
                   <span>Bab Sebelumnya</span>
                 </button>
 
-                <span className="text-xs font-medium text-[var(--nv-muted)] tabular-nums">
+                <span className="text-xs font-medium text-[var(--nv-muted)] tabular-nums whitespace-nowrap shrink-0">
                   Bab {chapterIndex + 1} / {Math.max(1, chapters.length)}
                 </span>
 
@@ -676,10 +708,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   type="button"
                   disabled={chapterIndex >= chapters.length - 1}
                   onClick={() => void handleSelectChapter(chapterIndex + 1)}
-                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium disabled:opacity-40"
+                  className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-[var(--nv-border)] px-3 sm:px-4 text-xs sm:text-sm font-medium disabled:opacity-40 whitespace-nowrap shrink-0"
                 >
                   <span>Bab Berikutnya</span>
-                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                  <ChevronRight className="h-4 w-4 shrink-0" aria-hidden="true" />
                 </button>
               </>
             )}
@@ -694,11 +726,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         totalSentences={allSentences.length}
         sleepRemainingSec={sleepRemainingSec}
         sleepTimerMode={ttsSettings.sleepTimerMinutes}
-        commaPauseMs={ttsSettings.commaPauseMs}
+        readingMode={ttsSettings.readingMode}
         rate={ttsSettings.rate}
         onTogglePlay={handleTogglePlay}
         onPrevSentence={() => controllerRef.current?.prevSentence()}
         onNextSentence={() => controllerRef.current?.nextSentence()}
+        onPrevParagraph={() => controllerRef.current?.prevParagraph()}
+        onNextParagraph={() => controllerRef.current?.nextParagraph()}
         onOpenTtsSettings={() => setTtsSheetOpen(true)}
       />
 
@@ -742,14 +776,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         open={ttsSheetOpen}
         settings={ttsSettings}
         voices={voices}
+        engineCapabilities={engineCapabilities}
         notificationStatus={notificationStatus}
         sleepRemainingSec={sleepRemainingSec}
         onUpdate={onUpdateTtsSettings}
         onPreviewVoice={(voiceURI) => {
           const sample =
             bookMeta.language.startsWith('en')
-              ? 'This is a preview of the selected reading voice, with natural pauses.'
-              : 'Ini adalah contoh suara pembacaan NovelVoice, dengan jeda koma yang terasa natural.';
+              ? 'This is a preview of the selected reading voice, flowing smoothly across sentences.'
+              : 'Ini adalah contoh suara pembacaan NovelVoice yang mengalir alami antar kalimat.';
           void controllerRef.current?.previewVoice(voiceURI, sample);
         }}
         onOpenAndroidTtsSettings={openNativeTtsSettings}

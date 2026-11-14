@@ -1,5 +1,15 @@
 import React from 'react';
-import { Moon, Pause, Play, SkipBack, SkipForward, SlidersHorizontal } from 'lucide-react';
+import {
+  ChevronsLeft,
+  ChevronsRight,
+  Moon,
+  Pause,
+  Play,
+  SkipBack,
+  SkipForward,
+  SlidersHorizontal,
+} from 'lucide-react';
+import type { TtsReadingMode } from '../types/reader';
 
 interface ReaderControlsBarProps {
   isPlaying: boolean;
@@ -7,11 +17,13 @@ interface ReaderControlsBarProps {
   totalSentences: number;
   sleepRemainingSec: number | null;
   sleepTimerMode: number;
-  commaPauseMs: number;
+  readingMode: TtsReadingMode;
   rate: number;
   onTogglePlay: () => void;
   onPrevSentence: () => void;
   onNextSentence: () => void;
+  onPrevParagraph: () => void;
+  onNextParagraph: () => void;
   onOpenTtsSettings: () => void;
 }
 
@@ -21,11 +33,13 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
   totalSentences,
   sleepRemainingSec,
   sleepTimerMode,
-  commaPauseMs,
+  readingMode,
   rate,
   onTogglePlay,
   onPrevSentence,
   onNextSentence,
+  onPrevParagraph,
+  onNextParagraph,
   onOpenTtsSettings,
 }) => {
   const safeTotal = Math.max(1, totalSentences);
@@ -34,13 +48,13 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
   return (
     <footer className="sticky bottom-0 z-30 border-t border-[var(--nv-border)] bg-[var(--nv-surface)]/95 backdrop-blur-md pb-safe">
       <div className="mx-auto flex max-w-4xl items-center justify-between gap-2 px-3 py-2 sm:px-5">
-        {/* Left: Sentence counter & sleep indicator */}
+        {/* Left: Sentence counter & mode */}
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-semibold tabular-nums">
             Kalimat {displayIndex} / {totalSentences}
           </p>
           <p className="truncate text-[11px] text-[var(--nv-muted)] tabular-nums">
-            {rate.toFixed(1)}× · Jeda {commaPauseMs}ms
+            {rate.toFixed(1)}× · {readingMode === 'flowing' ? 'Mengalir' : 'Per kalimat'}
             {sleepRemainingSec !== null && (
               <>
                 {' '}
@@ -54,11 +68,22 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
         </div>
 
         {/* Center: Thumb-zone Playback Controls */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={onPrevParagraph}
+            aria-label="Paragraf sebelumnya"
+            title="Paragraf sebelumnya"
+            className="hidden sm:inline-flex min-h-[44px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <ChevronsLeft className="h-4 w-4" aria-hidden="true" />
+          </button>
+
           <button
             type="button"
             onClick={onPrevSentence}
             aria-label="Kalimat sebelumnya"
+            title="Kalimat sebelumnya"
             className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
           >
             <SkipBack className="h-5 w-5" aria-hidden="true" />
@@ -81,9 +106,20 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
             type="button"
             onClick={onNextSentence}
             aria-label="Kalimat berikutnya"
+            title="Kalimat berikutnya"
             className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
           >
             <SkipForward className="h-5 w-5" aria-hidden="true" />
+          </button>
+
+          <button
+            type="button"
+            onClick={onNextParagraph}
+            aria-label="Paragraf berikutnya"
+            title="Paragraf berikutnya"
+            className="hidden sm:inline-flex min-h-[44px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <ChevronsRight className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
 

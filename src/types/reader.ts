@@ -1,6 +1,7 @@
 export type ReaderTheme = 'light' | 'sepia' | 'dark';
 export type ReaderFont = 'literata' | 'jakarta' | 'mono';
 export type ReadingMode = 'scroll' | 'paginated';
+export type TtsReadingMode = 'flowing' | 'sentence';
 
 export type TargetLanguageCode = 'id' | 'en' | 'ms' | 'jv' | 'ar' | 'ja' | 'zh-CN';
 
@@ -21,6 +22,7 @@ export interface BookMetadata {
 export interface ReadingPosition {
   bookId: string;
   chapterIndex: number;
+  charOffset: number;
   sentenceIndex: number;
   wordIndex: number;
   scrollRatio: number;
@@ -60,34 +62,42 @@ export interface TtsVoiceInfo {
   engineName?: string;
 }
 
+export interface TtsEngineCapabilities {
+  maxSpeechInputLength: number;
+  ssmlSupported: boolean;
+  enginePackage?: string;
+}
+
 export interface TtsSettings {
   voiceURI: string;
   langFilter: string;
+  readingMode: TtsReadingMode;
+  chunkSizeChars: number;
   rate: number;
   pitch: number;
+  paragraphPauseMs: number;
   commaPauseMs: number;
+  sentencePauseMs: number;
   sleepTimerMinutes: number; // 0 = off, -1 = end of chapter, >0 = minutes
 }
 
 export interface WordToken {
   wordIndex: number;
+  sentenceIndex: number;
+  paragraphIndex: number;
   text: string;
-  startChar: number;
+  startChar: number; // Relative to sentence start
   endChar: number;
-}
-
-export interface CommaChunk {
-  chunkIndex: number;
-  text: string;
-  startCharOffset: number;
-  endCharOffset: number;
-  pauseAfterMs: number;
+  chapterStartChar: number; // Exact UTF-16 offset in chapter text
+  chapterEndChar: number;
 }
 
 export interface SentenceSegment {
   globalIndex: number;
   paragraphIndex: number;
   text: string;
+  chapterStartChar: number;
+  chapterEndChar: number;
   words: WordToken[];
 }
 
@@ -96,7 +106,28 @@ export interface ParsedParagraph {
   index: number;
   tag: 'p' | 'h1' | 'h2' | 'h3' | 'blockquote';
   rawText: string;
+  chapterStartChar: number;
+  chapterEndChar: number;
   sentences: SentenceSegment[];
+}
+
+export interface SpeechChunkSlice {
+  paragraphIndex: number;
+  chapterStartChar: number;
+  chapterEndChar: number;
+  localStartChar: number;
+  localEndChar: number;
+}
+
+export interface SpeechChunk {
+  chunkIndex: number;
+  text: string;
+  speakText: string; // May contain SSML if ssmlSupported and extra pauses > 0
+  isSsml: boolean;
+  chapterStartChar: number;
+  chapterEndChar: number;
+  pauseAfterMs: number;
+  slices: SpeechChunkSlice[];
 }
 
 export interface TranslationResult {

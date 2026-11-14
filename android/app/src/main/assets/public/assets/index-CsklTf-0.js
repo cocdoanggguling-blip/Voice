@@ -11601,6 +11601,32 @@ var ChevronRight = createLucideIcon("chevron-right", [["path", {
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var ChevronsLeft = createLucideIcon("chevrons-left", [["path", {
+	d: "m11 17-5-5 5-5",
+	key: "13zhaf"
+}], ["path", {
+	d: "m18 17-5-5 5-5",
+	key: "h8a8et"
+}]]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var ChevronsRight = createLucideIcon("chevrons-right", [["path", {
+	d: "m6 17 5-5-5-5",
+	key: "xnjwq"
+}], ["path", {
+	d: "m13 17 5-5-5-5",
+	key: "17xmmf"
+}]]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var ExternalLink = createLucideIcon("external-link", [
 	["path", {
 		d: "M15 3h6v6",
@@ -36882,7 +36908,12 @@ ePub.utils = core_exports;
 var src_default = ePub;
 // src/utils/textSegmentation.ts
 var ABBREVIATIONS = /* @__PURE__ */ new Set([
+	"tn.",
+	"ny.",
+	"sdr.",
+	"sdri.",
 	"dr.",
+	"drg.",
 	"mr.",
 	"mrs.",
 	"ms.",
@@ -36894,162 +36925,138 @@ var ABBREVIATIONS = /* @__PURE__ */ new Set([
 	"dkk.",
 	"dll.",
 	"dsb.",
+	"dst.",
 	"yth.",
 	"a.n.",
+	"u.p.",
 	"s.h.",
 	"s.kom.",
+	"s.pd.",
 	"st.",
 	"vs.",
 	"e.g.",
 	"i.e.",
-	"etc."
+	"etc.",
+	"vol.",
+	"bab."
 ]);
-/**
-* Splits prose into sentences at terminal punctuation (., !, ?) including
-* trailing closing quotes or parentheses, while avoiding splits inside common
-* abbreviations and decimal numbers.
-*/
-function splitIntoSentences(input) {
-	const normalized = input.replace(/\s+/g, " ").trim();
-	if (!normalized) return [];
-	const sentences = [];
-	let start = 0;
-	for (let i = 0; i < normalized.length; i++) {
-		const ch = normalized[i];
-		if (ch !== "." && ch !== "!" && ch !== "?") continue;
-		if (ch === "." && normalized[i + 1] === ".") continue;
-		if (ch === "." && i > 0 && /\d/.test(normalized[i - 1]) && /\d/.test(normalized[i + 1] ?? "")) continue;
-		if (ch === ".") {
-			const lastWordMatch = normalized.slice(start, i + 1).match(/([A-Za-zÀ-ÿ.]+)$/);
-			if (lastWordMatch && ABBREVIATIONS.has(lastWordMatch[1].toLowerCase())) continue;
-		}
-		let endIdx = i + 1;
-		let sawClosingQuote = false;
-		while (endIdx < normalized.length && /["”’')\]»]/.test(normalized[endIdx])) {
-			if (/["”’'»]/.test(normalized[endIdx])) sawClosingQuote = true;
-			endIdx++;
-		}
-		const nextChar = normalized[endIdx];
-		const isAtEnd = endIdx >= normalized.length;
-		const followedBySpace = nextChar === " ";
-		if (sawClosingQuote && followedBySpace && endIdx + 1 < normalized.length) {
-			const nextWordStart = normalized[endIdx + 1];
-			if (/[a-zà-ÿ]/.test(nextWordStart)) continue;
-		}
-		if (isAtEnd || followedBySpace) {
-			const piece = normalized.slice(start, endIdx).trim();
-			if (piece) sentences.push(piece);
-			start = endIdx;
-			while (start < normalized.length && normalized[start] === " ") start++;
-			i = Math.max(i, start - 1);
-		}
-	}
-	if (start < normalized.length) {
-		const tail = normalized.slice(start).trim();
-		if (tail) sentences.push(tail);
-	}
-	return sentences;
+function shouldMergeSentenceBoundary(fullText, boundaryEndIndex) {
+	const before = fullText.slice(0, boundaryEndIndex).trimEnd();
+	const after = fullText.slice(boundaryEndIndex).trimStart();
+	if (!before || !after) return false;
+	if (before.endsWith("...") || before.endsWith("…")) return /^[a-zà-ÿ0-9]/i.test(after) && !/^[A-ZÀ-Ÿ]/.test(after);
+	const lastTokenMatch = before.match(/([A-Za-zÀ-ÿ.]+)$/);
+	if (lastTokenMatch && ABBREVIATIONS.has(lastTokenMatch[1].toLowerCase())) return true;
+	if (/\d\.$/.test(before) && /^\d/.test(after)) return true;
+	if (/[.!?]["”’'»)\]]+$/.test(before) && /^[a-zà-ÿ]/.test(after)) return true;
+	if ((before.match(/[“"«]/g) || []).length > (before.match(/[”"»]/g) || []).length && /^[a-zà-ÿ]/.test(after)) return true;
+	return false;
 }
 /**
-* Tokenizes a sentence into words with exact UTF-16 character offsets
-* so TTS range/boundary events map cleanly to highlighted words.
+* Splits prose into sentence spans with exact UTF-16 offsets using Intl.Segmenter
+* (granularity: "sentence", locale "id") enhanced with abbreviation, decimal,
+* ellipsis, and dialog-quote guards.
 */
-function tokenizeWords(sentence) {
+function splitIntoSentencesWithOffsets(input, locale = "id") {
+	const normalized = input.replace(/\s+/g, " ").trim();
+	if (!normalized) return [];
+	const rawSpans = [];
+	if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+		const SegmenterCtor = Intl.Segmenter;
+		const segmenter = new SegmenterCtor(locale || "id", { granularity: "sentence" });
+		for (const seg of segmenter.segment(normalized)) {
+			const leading = seg.segment.length - seg.segment.trimStart().length;
+			const trimmed = seg.segment.trim();
+			if (!trimmed) continue;
+			const startOffset = seg.index + leading;
+			rawSpans.push({
+				text: trimmed,
+				startOffset,
+				endOffset: startOffset + trimmed.length
+			});
+		}
+	} else {
+		const regex = /[^.!?…]+(?:[.!?…]+["”’')\]»]*|$)/g;
+		let match;
+		while ((match = regex.exec(normalized)) !== null) {
+			const leading = match[0].length - match[0].trimStart().length;
+			const trimmed = match[0].trim();
+			if (!trimmed) continue;
+			const startOffset = match.index + leading;
+			rawSpans.push({
+				text: trimmed,
+				startOffset,
+				endOffset: startOffset + trimmed.length
+			});
+		}
+	}
+	if (rawSpans.length === 0) return [{
+		text: normalized,
+		startOffset: 0,
+		endOffset: normalized.length
+	}];
+	const merged = [];
+	for (const span of rawSpans) {
+		if (merged.length === 0) {
+			merged.push({ ...span });
+			continue;
+		}
+		const prev = merged[merged.length - 1];
+		if (shouldMergeSentenceBoundary(normalized, prev.endOffset)) {
+			prev.endOffset = span.endOffset;
+			prev.text = normalized.slice(prev.startOffset, prev.endOffset);
+		} else merged.push({ ...span });
+	}
+	return merged;
+}
+/**
+* Tokenizes a sentence into words with exact offsets both locally and in chapter coordinates.
+*/
+function tokenizeWords(sentence, sentenceIndex = 0, paragraphIndex = 0, sentenceChapterStart = 0) {
 	const tokens = [];
 	const regex = /\S+/g;
 	let match;
 	let idx = 0;
 	while ((match = regex.exec(sentence)) !== null) tokens.push({
 		wordIndex: idx++,
+		sentenceIndex,
+		paragraphIndex,
 		text: match[0],
 		startChar: match.index,
-		endChar: match.index + match[0].length
+		endChar: match.index + match[0].length,
+		chapterStartChar: sentenceChapterStart + match.index,
+		chapterEndChar: sentenceChapterStart + match.index + match[0].length
 	});
 	return tokens;
 }
 /**
-* Splits a sentence into comma/semicolon/colon segments so TTS can insert
-* natural micro-pauses (0-500ms) while preserving exact character offsets
-* relative to the parent sentence.
+* Segments chapter paragraphs into a unified chapter-character coordinate system.
+* Paragraphs are separated by "\n\n" (2 chars) in chapter offset space.
 */
-function splitSentenceIntoCommaChunks(sentence, commaPauseMs, startFromWordIndex = 0) {
-	const words = tokenizeWords(sentence);
-	let effectiveStartOffset = 0;
-	if (startFromWordIndex > 0 && words.length > 0) effectiveStartOffset = words[Math.min(startFromWordIndex, words.length - 1)].startChar;
-	const sliced = sentence.slice(effectiveStartOffset);
-	if (!sliced.trim()) return [];
-	const chunks = [];
-	const boundaryRegex = /([,;:])(?=\s+)/g;
-	let lastIndex = 0;
-	let match;
-	while ((match = boundaryRegex.exec(sliced)) !== null) {
-		const splitPoint = match.index + match[0].length;
-		const rawSegment = sliced.slice(lastIndex, splitPoint);
-		const leadingSpaces = rawSegment.length - rawSegment.trimStart().length;
-		const trimmed = rawSegment.trim();
-		if (trimmed) chunks.push({
-			chunkIndex: chunks.length,
-			text: trimmed,
-			startCharOffset: effectiveStartOffset + lastIndex + leadingSpaces,
-			endCharOffset: effectiveStartOffset + lastIndex + leadingSpaces + trimmed.length,
-			pauseAfterMs: Math.max(0, Math.min(500, commaPauseMs))
-		});
-		lastIndex = splitPoint;
-	}
-	if (lastIndex < sliced.length) {
-		const rawTail = sliced.slice(lastIndex);
-		const leadingSpaces = rawTail.length - rawTail.trimStart().length;
-		const trimmedTail = rawTail.trim();
-		if (trimmedTail) chunks.push({
-			chunkIndex: chunks.length,
-			text: trimmedTail,
-			startCharOffset: effectiveStartOffset + lastIndex + leadingSpaces,
-			endCharOffset: effectiveStartOffset + lastIndex + leadingSpaces + trimmedTail.length,
-			pauseAfterMs: 0
-		});
-	}
-	if (chunks.length > 0) chunks[chunks.length - 1].pauseAfterMs = 0;
-	return chunks;
-}
-/**
-* Maps a character offset within a sentence back to the matching word index.
-*/
-function findWordIndexAtCharOffset(words, charOffset) {
-	if (words.length === 0) return 0;
-	for (let i = 0; i < words.length; i++) {
-		const w = words[i];
-		if (charOffset >= w.startChar && charOffset < w.endChar) return w.wordIndex;
-		if (charOffset < w.startChar) return Math.max(0, i);
-	}
-	return words.length - 1;
-}
-/**
-* Fallback duration estimator per word (in ms) when native onRangeStart /
-* WebSpeech onboundary events are not emitted by the active TTS engine.
-*/
-function estimateWordDurationMs(word, rate) {
-	const safeRate = Math.max(.5, Math.min(2.5, rate || 1));
-	const baseMs = 155 + Math.max(1, word.replace(/[^\p{L}\p{N}]/gu, "").length) * 36;
-	const punctuationBonus = /[,;:]$/.test(word) ? 110 : /[.!?]$/.test(word) ? 140 : 0;
-	return Math.round((baseMs + punctuationBonus) / safeRate);
-}
-/**
-* Segments clean paragraph entries into structured paragraphs and a flat
-* array of sentences indexed globally across the chapter.
-*/
-function segmentParagraphs(entries) {
+function segmentParagraphs(entries, locale = "id") {
 	const paragraphs = [];
 	const allSentences = [];
+	const allWords = [];
+	let cursor = 0;
 	for (const entry of entries) {
 		const cleanText = entry.text.replace(/\s+/g, " ").trim();
 		if (!cleanText) continue;
 		const pIndex = paragraphs.length;
-		const sentenceSegments = splitIntoSentences(cleanText).map((sentenceText) => {
+		const pStart = cursor;
+		const pEnd = pStart + cleanText.length;
+		const sentenceSegments = splitIntoSentencesWithOffsets(cleanText, locale).map((span) => {
+			const globalIndex = allSentences.length;
+			const chapStart = pStart + span.startOffset;
+			const chapEnd = pStart + span.endOffset;
+			const words = tokenizeWords(span.text, globalIndex, pIndex, chapStart);
+			allWords.push(...words);
 			const seg = {
-				globalIndex: allSentences.length,
+				globalIndex,
 				paragraphIndex: pIndex,
-				text: sentenceText,
-				words: tokenizeWords(sentenceText)
+				text: span.text,
+				chapterStartChar: chapStart,
+				chapterEndChar: chapEnd,
+				words
 			};
 			allSentences.push(seg);
 			return seg;
@@ -37059,18 +37066,285 @@ function segmentParagraphs(entries) {
 			index: pIndex,
 			tag: entry.tag,
 			rawText: cleanText,
+			chapterStartChar: pStart,
+			chapterEndChar: pEnd,
 			sentences: sentenceSegments
 		});
+		cursor = pEnd + 2;
 	}
 	return {
 		paragraphs,
-		allSentences
+		allSentences,
+		allWords,
+		totalChars: Math.max(0, cursor - 2)
 	};
 }
 /**
-* Lightweight language heuristic for keyless MyMemory API (which expects an
-* explicit source language rather than 'auto').
+* Injects SSML <break> tags ONLY when the engine supports SSML and extra
+* comma/sentence pauses > 0. Never splits the utterance itself.
 */
+function buildOptionalSsml(plainText, commaPauseMs, sentencePauseMs, ssmlSupported) {
+	if (!ssmlSupported || commaPauseMs <= 0 && sentencePauseMs <= 0) return {
+		speakText: plainText,
+		isSsml: false
+	};
+	let escaped = plainText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+	if (commaPauseMs > 0) {
+		const clampedComma = Math.min(300, Math.max(0, Math.round(commaPauseMs)));
+		escaped = escaped.replace(/([,;:])(\s+)/g, `$1<break time="${clampedComma}ms"/>$2`);
+	}
+	if (sentencePauseMs > 0) {
+		const clampedSent = Math.min(600, Math.max(0, Math.round(sentencePauseMs)));
+		escaped = escaped.replace(/([.!?]["”’')\]»]*)(\s+)/g, `$1<break time="${clampedSent}ms"/>$2`);
+	}
+	return {
+		speakText: `<speak>${escaped}</speak>`,
+		isSsml: true
+	};
+}
+/**
+* Builds the playback queue of voice units starting from `startChapterOffset`.
+* - "flowing": sends whole paragraphs (or merges short dialogue paragraphs up to ~300-600 chars)
+*   as single speech units; splits long paragraphs ONLY at sentence boundaries before
+*   min(chunkSizeChars, maxEngineInputLength). Adds paragraphPauseMs only between paragraphs.
+* - "sentence": legacy per-sentence fallback mode.
+*/
+function buildSpeechChunksFromOffset(paragraphs, startChapterOffset, options) {
+	if (paragraphs.length === 0) return [];
+	const userChunkSize = Math.max(300, Math.min(3e3, options.chunkSizeChars));
+	const engineLimit = options.maxEngineInputLength > 0 ? options.maxEngineInputLength : 3500;
+	const hardMax = Math.min(userChunkSize, engineLimit);
+	const shortMergeTarget = Math.min(600, Math.max(300, Math.round(hardMax * .6)));
+	const isShortPiece = (len) => len < 180;
+	const chunks = [];
+	if (options.readingMode === "sentence") {
+		for (const para of paragraphs) for (let sIdx = 0; sIdx < para.sentences.length; sIdx++) {
+			const sent = para.sentences[sIdx];
+			if (sent.chapterEndChar <= startChapterOffset) continue;
+			const sliceStart = Math.max(sent.chapterStartChar, startChapterOffset);
+			const relStart = sliceStart - sent.chapterStartChar;
+			const text = sent.text.slice(relStart).trimStart();
+			const actualStart = sliceStart + (sent.text.slice(relStart).length - text.length);
+			if (!text) continue;
+			const isLastInPara = sIdx === para.sentences.length - 1;
+			const { speakText, isSsml } = buildOptionalSsml(text, options.commaPauseMs, options.sentencePauseMs, options.ssmlSupported);
+			chunks.push({
+				chunkIndex: chunks.length,
+				text,
+				speakText,
+				isSsml,
+				chapterStartChar: actualStart,
+				chapterEndChar: sent.chapterEndChar,
+				pauseAfterMs: isLastInPara ? options.paragraphPauseMs : 120,
+				slices: [{
+					paragraphIndex: para.index,
+					chapterStartChar: actualStart,
+					chapterEndChar: sent.chapterEndChar,
+					localStartChar: 0,
+					localEndChar: text.length
+				}]
+			});
+		}
+		return chunks;
+	}
+	const atomicPieces = [];
+	for (const para of paragraphs) {
+		if (para.chapterEndChar <= startChapterOffset) continue;
+		const resumeStart = Math.max(para.chapterStartChar, startChapterOffset);
+		const remainingSentences = para.sentences.filter((s) => s.chapterEndChar > resumeStart);
+		if (remainingSentences.length === 0) continue;
+		let groupSentences = [];
+		let groupLen = 0;
+		const flushGroup = (isParaEnd) => {
+			if (groupSentences.length === 0) return;
+			const first = groupSentences[0];
+			const last = groupSentences[groupSentences.length - 1];
+			const sliceStart = Math.max(first.chapterStartChar, resumeStart);
+			const rawPrefix = first.text.slice(sliceStart - first.chapterStartChar);
+			const actualStart = sliceStart + (rawPrefix.length - rawPrefix.trimStart().length);
+			const joined = groupSentences.map((s, idx) => {
+				if (idx === 0) return s.text.slice(actualStart - s.chapterStartChar);
+				return s.text;
+			}).join(" ");
+			atomicPieces.push({
+				paragraphIndex: para.index,
+				text: joined,
+				chapterStartChar: actualStart,
+				chapterEndChar: last.chapterEndChar,
+				endsParagraph: isParaEnd
+			});
+			groupSentences = [];
+			groupLen = 0;
+		};
+		for (let i = 0; i < remainingSentences.length; i++) {
+			const sent = remainingSentences[i];
+			const isLast = i === remainingSentences.length - 1;
+			const effectiveLen = i === 0 && sent.chapterStartChar < resumeStart ? sent.chapterEndChar - resumeStart : sent.text.length;
+			if (groupSentences.length > 0 && groupLen + 1 + effectiveLen > hardMax) flushGroup(false);
+			if (effectiveLen > hardMax && groupSentences.length === 0) {
+				const startOff = Math.max(sent.chapterStartChar, resumeStart);
+				const sliceText = sent.text.slice(startOff - sent.chapterStartChar).trimStart();
+				const leadSkip = sent.text.slice(startOff - sent.chapterStartChar).length - sliceText.length;
+				let subCursor = 0;
+				const baseStart = startOff + leadSkip;
+				while (subCursor < sliceText.length) {
+					let cut = Math.min(sliceText.length, subCursor + hardMax);
+					if (cut < sliceText.length) {
+						const lastSpace = sliceText.lastIndexOf(" ", cut);
+						if (lastSpace > subCursor + Math.floor(hardMax * .4)) cut = lastSpace;
+					}
+					const piece = sliceText.slice(subCursor, cut).trim();
+					if (piece) {
+						const leadingPiece = sliceText.slice(subCursor, cut).length - sliceText.slice(subCursor, cut).trimStart().length;
+						const pStart = baseStart + subCursor + leadingPiece;
+						atomicPieces.push({
+							paragraphIndex: para.index,
+							text: piece,
+							chapterStartChar: pStart,
+							chapterEndChar: pStart + piece.length,
+							endsParagraph: isLast && cut >= sliceText.length
+						});
+					}
+					subCursor = cut;
+					while (subCursor < sliceText.length && sliceText[subCursor] === " ") subCursor++;
+				}
+				continue;
+			}
+			groupSentences.push(sent);
+			groupLen += (groupLen > 0 ? 1 : 0) + effectiveLen;
+			if (isLast) flushGroup(true);
+		}
+	}
+	let bufferPieces = [];
+	let bufferLen = 0;
+	const commitBuffer = () => {
+		if (bufferPieces.length === 0) return;
+		const slices = [];
+		let combined = "";
+		for (let i = 0; i < bufferPieces.length; i++) {
+			const piece = bufferPieces[i];
+			if (i > 0) combined += " ";
+			const localStart = combined.length;
+			combined += piece.text;
+			slices.push({
+				paragraphIndex: piece.paragraphIndex,
+				chapterStartChar: piece.chapterStartChar,
+				chapterEndChar: piece.chapterEndChar,
+				localStartChar: localStart,
+				localEndChar: combined.length
+			});
+		}
+		const lastPiece = bufferPieces[bufferPieces.length - 1];
+		const { speakText, isSsml } = buildOptionalSsml(combined, options.commaPauseMs, options.sentencePauseMs, options.ssmlSupported);
+		chunks.push({
+			chunkIndex: chunks.length,
+			text: combined,
+			speakText,
+			isSsml,
+			chapterStartChar: bufferPieces[0].chapterStartChar,
+			chapterEndChar: lastPiece.chapterEndChar,
+			pauseAfterMs: lastPiece.endsParagraph ? options.paragraphPauseMs : 0,
+			slices
+		});
+		bufferPieces = [];
+		bufferLen = 0;
+	};
+	for (const piece of atomicPieces) {
+		if (bufferPieces.length === 0) {
+			bufferPieces.push(piece);
+			bufferLen = piece.text.length;
+			if (!piece.endsParagraph || !isShortPiece(bufferLen) || bufferLen >= shortMergeTarget) commitBuffer();
+			continue;
+		}
+		if (piece.endsParagraph && isShortPiece(piece.text.length) && bufferLen + 1 + piece.text.length <= shortMergeTarget) {
+			bufferPieces.push(piece);
+			bufferLen += 1 + piece.text.length;
+			if (bufferLen >= shortMergeTarget) commitBuffer();
+		} else {
+			commitBuffer();
+			bufferPieces.push(piece);
+			bufferLen = piece.text.length;
+			if (!piece.endsParagraph || !isShortPiece(bufferLen) || bufferLen >= shortMergeTarget) commitBuffer();
+		}
+	}
+	commitBuffer();
+	if (chunks.length > 0) chunks[chunks.length - 1].pauseAfterMs = 0;
+	return chunks;
+}
+/**
+* Maps a local character index inside a SpeechChunk back to the exact chapter character offset.
+*/
+function mapChunkLocalOffsetToChapterOffset(chunk, localCharOffset) {
+	const clampedLocal = Math.max(0, Math.min(localCharOffset, chunk.text.length));
+	for (const slice of chunk.slices) if (clampedLocal >= slice.localStartChar && clampedLocal <= slice.localEndChar) {
+		const delta = clampedLocal - slice.localStartChar;
+		return Math.min(slice.chapterEndChar, slice.chapterStartChar + delta);
+	}
+	return chunk.chapterStartChar;
+}
+/**
+* Finds the active sentence & word indices from a chapter character offset.
+*/
+function findLocationAtChapterOffset(allSentences, chapterOffset) {
+	if (allSentences.length === 0) return {
+		sentenceIndex: 0,
+		wordIndex: 0,
+		paragraphIndex: 0,
+		chapterOffset: 0
+	};
+	let lo = 0;
+	let hi = allSentences.length - 1;
+	let matchedSentence = allSentences[0];
+	while (lo <= hi) {
+		const mid = lo + hi >> 1;
+		const s = allSentences[mid];
+		if (chapterOffset >= s.chapterStartChar && chapterOffset <= s.chapterEndChar) {
+			matchedSentence = s;
+			break;
+		}
+		if (chapterOffset < s.chapterStartChar) {
+			matchedSentence = s;
+			hi = mid - 1;
+		} else lo = mid + 1;
+	}
+	if (chapterOffset > allSentences[allSentences.length - 1].chapterEndChar) matchedSentence = allSentences[allSentences.length - 1];
+	const words = matchedSentence.words;
+	let wordIndex = 0;
+	for (let i = 0; i < words.length; i++) {
+		const w = words[i];
+		if (chapterOffset >= w.chapterStartChar && chapterOffset <= w.chapterEndChar) {
+			wordIndex = w.wordIndex;
+			break;
+		}
+		if (chapterOffset < w.chapterStartChar) {
+			wordIndex = w.wordIndex;
+			break;
+		}
+		wordIndex = w.wordIndex;
+	}
+	return {
+		sentenceIndex: matchedSentence.globalIndex,
+		wordIndex,
+		paragraphIndex: matchedSentence.paragraphIndex,
+		chapterOffset: Math.max(0, chapterOffset)
+	};
+}
+/**
+* Resolves the starting character offset of the sentence that contains `chapterOffset`.
+* Used for clean sentence-aligned resume after pause/stop if desired.
+*/
+function findSentenceStartForOffset(allSentences, chapterOffset) {
+	return allSentences[findLocationAtChapterOffset(allSentences, chapterOffset).sentenceIndex]?.chapterStartChar ?? 0;
+}
+/**
+* Estimates total spoken duration (ms) of a speech chunk at a given rate (0.5x - 3.0x),
+* used strictly as a non-intrusive visual highlight fallback when boundary events are absent.
+*/
+function estimateChunkDurationMs(text, rate) {
+	const safeRate = Math.max(.5, Math.min(3.5, rate || 1));
+	const baseMs = Math.max(1, text.trim().length) / 14.5 * 1e3;
+	return Math.max(350, Math.round(baseMs / safeRate));
+}
 function detectLikelySourceLanguage(text, bookLangHint) {
 	const hint = (bookLangHint || "").toLowerCase().split("-")[0];
 	const sample = ` ${text.toLowerCase()} `;
@@ -37199,7 +37473,7 @@ async function openEpubForReading(buffer) {
 * Loads a spine section via epubjs and extracts clean readable paragraphs
 * tokenized into sentences and words for synced TTS & instant translation.
 */
-async function loadChapterSegments(book, chapterIndex) {
+async function loadChapterSegments(book, chapterIndex, locale = "id") {
 	const section = book.spine.get(chapterIndex);
 	if (!section) return {
 		paragraphs: [],
@@ -37241,7 +37515,7 @@ async function loadChapterSegments(book, chapterIndex) {
 			text: clean
 		});
 	});
-	const segmented = segmentParagraphs(entries);
+	const segmented = segmentParagraphs(entries, locale);
 	section.unload();
 	return {
 		...segmented,
@@ -37478,9 +37752,13 @@ var DEFAULT_READER_SETTINGS = {
 var DEFAULT_TTS_SETTINGS = {
 	voiceURI: "",
 	langFilter: "all",
+	readingMode: "flowing",
+	chunkSizeChars: 800,
 	rate: 1,
 	pitch: 1,
-	commaPauseMs: 180,
+	paragraphPauseMs: 300,
+	commaPauseMs: 0,
+	sentencePauseMs: 0,
 	sleepTimerMinutes: 0
 };
 var dbPromise = null;
@@ -38229,139 +38507,34 @@ var SystemBarsPluginWeb = class extends WebPlugin {
 	}
 };
 registerPlugin("SystemBars", { web: () => new SystemBarsPluginWeb() });
-// node_modules/@capacitor-community/text-to-speech/dist/esm/definitions.js
-var QueueStrategy;
-(function(QueueStrategy) {
-	/**
-	* Use `Flush` to stop the current request when a new request is sent.
-	*/
-	QueueStrategy[QueueStrategy["Flush"] = 0] = "Flush";
-	/**
-	* Use `Add` to buffer the speech request. The request will be executed when all previous requests have been completed.
-	*/
-	QueueStrategy[QueueStrategy["Add"] = 1] = "Add";
-})(QueueStrategy || (QueueStrategy = {}));
-// \0vite/preload-helper.js
-var scriptRel = "modulepreload";
-var assetsURL = function(dep) {
-	return "/" + dep;
-};
-var seen = {};
-var isCssPreloadUrl = function isCssPreloadUrl(url) {
-	return url.pathname.endsWith(".css");
-};
-var preloadOnce = function preloadOnce(seen, href, preload) {
-	if (href in seen) return seen[href];
-	const promise = preload();
-	if (!promise) {
-		seen[href] = void 0;
-		return;
-	}
-	const preloadPromise = promise.then(() => {
-		seen[href] = void 0;
-	}, (err) => {
-		seen[href] = void 0;
-		throw err;
-	});
-	seen[href] = preloadPromise;
-	return preloadPromise;
-};
-var __vitePreload = function preload(baseModule, deps, importerUrl) {
-	let promise = Promise.resolve();
-	if (deps && deps.length > 0) {
-		let preloadedHrefs;
-		const cspNonceMeta = document.querySelector("meta[property=csp-nonce]");
-		const cspNonce = cspNonceMeta?.nonce || cspNonceMeta?.getAttribute("nonce");
-		function allSettled(promises) {
-			return Promise.all(promises.map((p) => Promise.resolve(p).then((value) => ({
-				status: "fulfilled",
-				value
-			}), (reason) => ({
-				status: "rejected",
-				reason
-			}))));
-		}
-		function importMetaResolve(specifier) {
-			if (import.meta.resolve) return new URL(import.meta.resolve(specifier));
-			return new URL(
-				specifier,
-				/** #__KEEP__ */
-				import.meta.url
-			);
-		}
-		promise = allSettled(deps.map((depString) => {
-			depString = assetsURL(depString, importerUrl);
-			const dep = importMetaResolve(depString);
-			const isCss = isCssPreloadUrl(dep);
-			return preloadOnce(seen, dep.href, () => {
-				if (preloadedHrefs === void 0) {
-					preloadedHrefs = {
-						all: /* @__PURE__ */ new Set(),
-						styles: /* @__PURE__ */ new Set()
-					};
-					const links = document.getElementsByTagName("link");
-					for (let i = links.length - 1; i >= 0; i--) {
-						const link = links[i];
-						preloadedHrefs.all.add(link.href);
-						if (link.rel === "stylesheet") preloadedHrefs.styles.add(link.href);
-					}
-				}
-				if ((isCss ? preloadedHrefs.styles : preloadedHrefs.all).has(dep.href)) return;
-				const link = document.createElement("link");
-				link.rel = isCss ? "stylesheet" : scriptRel;
-				if (!isCss) link.as = "script";
-				link.crossOrigin = "";
-				link.href = dep.href;
-				if (cspNonce) link.setAttribute("nonce", cspNonce);
-				document.head.appendChild(link);
-				if (isCss) return new Promise((res, rej) => {
-					const handleSettle = (e) => {
-						link.removeEventListener("load", handleSettle);
-						link.removeEventListener("error", handleSettle);
-						if (e.type === "error") rej(/* @__PURE__ */ new Error(`Unable to preload CSS for ${dep}`));
-						else res(e);
-					};
-					link.addEventListener("load", handleSettle);
-					link.addEventListener("error", handleSettle);
-				});
-			});
-		}).filter((p) => p !== void 0));
-	}
-	function handlePreloadError(err) {
-		const e = new Event("vite:preloadError", { cancelable: true });
-		e.payload = err;
-		window.dispatchEvent(e);
-		if (!e.defaultPrevented) throw err;
-	}
-	return promise.then((res) => {
-		for (const item of res || []) {
-			if (item.status !== "rejected") continue;
-			handlePreloadError(item.reason);
-		}
-		return baseModule().catch(handlePreloadError);
-	});
-};
-// node_modules/@capacitor-community/text-to-speech/dist/esm/index.js
-var TextToSpeech = registerPlugin("TextToSpeech", { web: () => __vitePreload(() => import("./web-c5I2G1BK.js").then((m) => new m.TextToSpeechWeb()), []) });
-if ("speechSynthesis" in window) window.speechSynthesis;
 // src/services/ttsBridge.ts
 var NovelVoiceTts = registerPlugin("NovelVoiceTts");
+async function getTtsEngineCapabilities() {
+	if (Capacitor.isNativePlatform()) try {
+		const info = await NovelVoiceTts.getEngineInfo();
+		return {
+			maxSpeechInputLength: info.maxSpeechInputLength > 0 ? info.maxSpeechInputLength : 3500,
+			ssmlSupported: Boolean(info.ssmlSupported),
+			enginePackage: info.enginePackage
+		};
+	} catch {
+		return {
+			maxSpeechInputLength: 3500,
+			ssmlSupported: false
+		};
+	}
+	return {
+		maxSpeechInputLength: 3500,
+		ssmlSupported: false
+	};
+}
 async function getSystemVoices() {
 	if (Capacitor.isNativePlatform()) {
 		try {
 			const res = await NovelVoiceTts.getVoices();
 			if (res?.voices?.length) return res.voices;
 		} catch {}
-		try {
-			return ((await TextToSpeech.getSupportedVoices()).voices || []).map((v) => ({
-				voiceURI: v.voiceURI,
-				name: v.name,
-				lang: v.lang,
-				localService: v.localService
-			}));
-		} catch {
-			return [];
-		}
+		return [];
 	}
 	if (typeof window === "undefined" || !("speechSynthesis" in window)) return [];
 	const readVoices = () => window.speechSynthesis.getVoices().map((v) => ({
@@ -38398,7 +38571,7 @@ async function openNativeTtsSettings() {
 	}
 	return {
 		opened: false,
-		message: "Di Android (APK), tombol ini langsung membuka Pengaturan Text-to-Speech sistem (Intent com.android.settings.TTS_SETTINGS) untuk mengganti mesin seperti Google TTS atau Sherpa."
+		message: "Di Android (APK), tombol ini langsung membuka Pengaturan Text-to-Speech sistem (Intent com.android.settings.TTS_SETTINGS) untuk memasang/mengganti mesin seperti Google TTS atau Sherpa."
 	};
 }
 async function checkAndroidNotificationPermission() {
@@ -38431,57 +38604,75 @@ async function requestAndroidNotificationPermission() {
 		return false;
 	}
 }
+var LOOKAHEAD_DEPTH = 2;
 /**
-* Orchestrates sentence-by-sentence and comma-chunk playback with:
-* - Natural configurable pauses at commas/semicolons/colons (0-500ms)
-* - Synced sentence + word highlighting (native onRangeStart / Web onboundary + duration fallback)
-* - Exact sentence & word resume after pause/stop
-* - Foreground MediaSession notification sync on Android
-* - Sleep timer (minutes or end-of-chapter)
+* Flowing TTS Controller that decouples Speech Units (large paragraph/merged chunks
+* queued gaplessly via QUEUE_ADD) from Highlight Units (word & sentence derived from
+* chapter character offset via onRangeStart/onboundary + proportional fallback).
 */
 var TtsPlaybackController = class {
 	constructor(settings, callbacks) {
-		this.sentences = [];
+		this.paragraphs = [];
+		this.allSentences = [];
+		this.capabilities = {
+			maxSpeechInputLength: 3500,
+			ssmlSupported: false
+		};
 		this.bookTitle = "";
 		this.chapterTitle = "";
 		this.isPlaying = false;
+		this.currentCharOffset = 0;
 		this.currentSentenceIndex = 0;
 		this.currentWordIndex = 0;
-		this.runToken = 0;
-		this.fallbackWordTimer = null;
-		this.pauseTimer = null;
+		this.sessionToken = 0;
+		this.chunks = [];
+		this.nextEnqueueIdx = 0;
+		this.activeChunkIdx = 0;
+		this.utteranceToChunkIdx = /* @__PURE__ */ new Map();
+		this.sawBoundaryForCurrentChunk = false;
+		this.webFallbackMode = false;
+		this.fallbackProgressTimer = null;
+		this.webPauseTimer = null;
 		this.sleepInterval = null;
 		this.sleepRemainingSec = null;
 		this.stopAtEndOfChapter = false;
 		this.nativeListeners = [];
-		this.activeUtteranceId = "";
-		this.activeChunkResolve = null;
-		this.activeChunk = null;
-		this.activeSentence = null;
-		this.sawBoundaryForChunk = false;
 		this.settings = settings;
 		this.callbacks = callbacks;
+		this.initEngineCapabilities();
 		this.setupNativeListeners();
+	}
+	async initEngineCapabilities() {
+		this.capabilities = await getTtsEngineCapabilities();
+	}
+	setCapabilities(caps) {
+		this.capabilities = caps;
 	}
 	async setupNativeListeners() {
 		if (!Capacitor.isNativePlatform()) return;
 		try {
+			const startHandle = await NovelVoiceTts.addListener("utteranceStart", (ev) => {
+				if (!this.isPlaying) return;
+				const cIdx = this.utteranceToChunkIdx.get(ev.utteranceId);
+				if (cIdx === void 0) return;
+				const chunk = this.chunks[cIdx];
+				if (!chunk) return;
+				this.onChunkBecameActive(cIdx, chunk, this.sessionToken);
+			});
 			const rangeHandle = await NovelVoiceTts.addListener("rangeStart", (ev) => {
-				if (!this.isPlaying || ev.utteranceId !== this.activeUtteranceId) return;
-				if (!this.activeChunk || !this.activeSentence) return;
-				this.sawBoundaryForChunk = true;
-				this.clearFallbackWordTimer();
-				const sentenceCharOffset = this.activeChunk.startCharOffset + ev.start;
-				const wordIdx = findWordIndexAtCharOffset(this.activeSentence.words, sentenceCharOffset);
-				this.currentWordIndex = wordIdx;
-				this.callbacks.onHighlight(this.currentSentenceIndex, wordIdx);
+				if (!this.isPlaying) return;
+				const cIdx = this.utteranceToChunkIdx.get(ev.utteranceId);
+				if (cIdx === void 0) return;
+				const chunk = this.chunks[cIdx];
+				if (!chunk) return;
+				this.handleBoundaryOffset(chunk, ev.start);
 			});
 			const doneHandle = await NovelVoiceTts.addListener("utteranceDone", (ev) => {
-				if (ev.utteranceId === this.activeUtteranceId && this.activeChunkResolve) {
-					const resolve = this.activeChunkResolve;
-					this.activeChunkResolve = null;
-					resolve();
-				}
+				const cIdx = this.utteranceToChunkIdx.get(ev.utteranceId);
+				if (cIdx === void 0) return;
+				this.utteranceToChunkIdx.delete(ev.utteranceId);
+				if (!this.isPlaying) return;
+				this.handleChunkFinished(cIdx, this.sessionToken);
 			});
 			const mediaHandle = await NovelVoiceTts.addListener("mediaAction", (ev) => {
 				if (ev.action === "pause") this.pause();
@@ -38490,20 +38681,22 @@ var TtsPlaybackController = class {
 				else if (ev.action === "prev") this.prevSentence();
 				else if (ev.action === "stop") this.stop();
 			});
-			this.nativeListeners.push(rangeHandle, doneHandle, mediaHandle);
+			this.nativeListeners.push(startHandle, rangeHandle, doneHandle, mediaHandle);
 		} catch {}
 	}
-	setBookContext(bookTitle, chapterTitle, sentences, initialSentenceIndex = 0, initialWordIndex = 0) {
+	setBookContext(bookTitle, chapterTitle, paragraphs, allSentences, initialCharOffset = 0) {
 		this.bookTitle = bookTitle;
 		this.chapterTitle = chapterTitle;
-		this.sentences = sentences;
-		this.currentSentenceIndex = Math.max(0, Math.min(initialSentenceIndex, Math.max(0, sentences.length - 1)));
-		this.currentWordIndex = Math.max(0, initialWordIndex);
+		this.paragraphs = paragraphs;
+		this.allSentences = allSentences;
+		this.syncCursorFromOffset(initialCharOffset);
 	}
 	updateSettings(nextSettings) {
-		const prevSleep = this.settings.sleepTimerMinutes;
+		const prev = this.settings;
 		this.settings = nextSettings;
-		if (prevSleep !== nextSettings.sleepTimerMinutes) this.configureSleepTimer(nextSettings.sleepTimerMinutes);
+		if (prev.sleepTimerMinutes !== nextSettings.sleepTimerMinutes) this.configureSleepTimer(nextSettings.sleepTimerMinutes);
+		const playbackParamsChanged = prev.rate !== nextSettings.rate || prev.pitch !== nextSettings.pitch || prev.voiceURI !== nextSettings.voiceURI || prev.readingMode !== nextSettings.readingMode || prev.chunkSizeChars !== nextSettings.chunkSizeChars || prev.paragraphPauseMs !== nextSettings.paragraphPauseMs || prev.commaPauseMs !== nextSettings.commaPauseMs || prev.sentencePauseMs !== nextSettings.sentencePauseMs;
+		if (this.isPlaying && playbackParamsChanged) this.playFromOffset(this.currentCharOffset);
 	}
 	configureSleepTimer(minutes) {
 		this.clearSleepTimer();
@@ -38522,8 +38715,7 @@ var TtsPlaybackController = class {
 		this.sleepRemainingSec = minutes * 60;
 		this.callbacks.onSleepTimerTick(this.sleepRemainingSec);
 		this.sleepInterval = window.setInterval(() => {
-			if (!this.isPlaying) return;
-			if (this.sleepRemainingSec === null) return;
+			if (!this.isPlaying || this.sleepRemainingSec === null) return;
 			this.sleepRemainingSec -= 1;
 			this.callbacks.onSleepTimerTick(Math.max(0, this.sleepRemainingSec));
 			if (this.sleepRemainingSec <= 0) {
@@ -38534,6 +38726,7 @@ var TtsPlaybackController = class {
 	}
 	getPosition() {
 		return {
+			charOffset: this.currentCharOffset,
 			sentenceIndex: this.currentSentenceIndex,
 			wordIndex: this.currentWordIndex
 		};
@@ -38541,16 +38734,44 @@ var TtsPlaybackController = class {
 	getIsPlaying() {
 		return this.isPlaying;
 	}
-	async playFrom(sentenceIndex, wordIndex = 0) {
-		if (this.sentences.length === 0) return;
-		this.cancelActiveSpeechOnly();
-		this.currentSentenceIndex = Math.max(0, Math.min(sentenceIndex, this.sentences.length - 1));
-		this.currentWordIndex = Math.max(0, wordIndex);
+	async playFromSentence(sentenceIndex) {
+		if (this.allSentences.length === 0) return;
+		const clamped = Math.max(0, Math.min(sentenceIndex, this.allSentences.length - 1));
+		const offset = this.allSentences[clamped].chapterStartChar;
+		await this.playFromOffset(offset);
+	}
+	async playFromOffset(charOffset) {
+		if (this.paragraphs.length === 0) return;
+		this.cancelActiveQueueOnly();
+		const token = ++this.sessionToken;
+		this.syncCursorFromOffset(charOffset);
+		this.chunks = buildSpeechChunksFromOffset(this.paragraphs, this.currentCharOffset, {
+			readingMode: this.settings.readingMode,
+			chunkSizeChars: this.settings.chunkSizeChars,
+			maxEngineInputLength: this.capabilities.maxSpeechInputLength,
+			paragraphPauseMs: this.settings.paragraphPauseMs,
+			commaPauseMs: this.settings.commaPauseMs,
+			sentencePauseMs: this.settings.sentencePauseMs,
+			ssmlSupported: this.capabilities.ssmlSupported
+		});
+		if (this.chunks.length === 0) {
+			this.isPlaying = false;
+			this.callbacks.onPlaybackStateChange(false);
+			return;
+		}
+		this.nextEnqueueIdx = 0;
+		this.activeChunkIdx = 0;
+		this.webFallbackMode = false;
 		this.isPlaying = true;
 		this.callbacks.onPlaybackStateChange(true);
 		this.configureSleepTimer(this.settings.sleepTimerMinutes);
 		if (Capacitor.isNativePlatform()) {
-			const preview = this.sentences[this.currentSentenceIndex]?.text ?? "";
+			await NovelVoiceTts.configureSession({
+				voiceURI: this.settings.voiceURI,
+				rate: this.settings.rate,
+				pitch: this.settings.pitch
+			}).catch(() => void 0);
+			const preview = this.allSentences[this.currentSentenceIndex]?.text ?? "";
 			await NovelVoiceTts.startForegroundService({
 				bookTitle: this.bookTitle,
 				chapterTitle: this.chapterTitle,
@@ -38558,20 +38779,22 @@ var TtsPlaybackController = class {
 				isPlaying: true
 			}).catch(() => void 0);
 		}
-		this.runLoop();
+		if (token !== this.sessionToken || !this.isPlaying) return;
+		await this.fillLookaheadQueue(token, true);
 	}
 	resume() {
 		if (this.isPlaying) return;
-		this.playFrom(this.currentSentenceIndex, this.currentWordIndex);
+		const sentenceStart = findSentenceStartForOffset(this.allSentences, this.currentCharOffset);
+		this.playFromOffset(sentenceStart);
 	}
 	pause() {
 		if (!this.isPlaying) return;
 		this.isPlaying = false;
-		this.runToken += 1;
-		this.cancelActiveSpeechOnly();
+		this.sessionToken += 1;
+		this.cancelActiveQueueOnly();
 		this.callbacks.onPlaybackStateChange(false);
 		if (Capacitor.isNativePlatform()) {
-			const preview = this.sentences[this.currentSentenceIndex]?.text ?? "";
+			const preview = this.allSentences[this.currentSentenceIndex]?.text ?? "";
 			NovelVoiceTts.updateNotification({
 				bookTitle: this.bookTitle,
 				chapterTitle: this.chapterTitle,
@@ -38582,202 +38805,255 @@ var TtsPlaybackController = class {
 	}
 	stop() {
 		this.isPlaying = false;
-		this.runToken += 1;
-		this.cancelActiveSpeechOnly();
+		this.sessionToken += 1;
+		this.cancelActiveQueueOnly();
 		this.clearSleepTimer();
 		this.callbacks.onPlaybackStateChange(false);
 		if (Capacitor.isNativePlatform()) NovelVoiceTts.stopForegroundService().catch(() => void 0);
 	}
 	nextSentence() {
-		if (this.sentences.length === 0) return;
-		const nextIdx = Math.min(this.sentences.length - 1, this.currentSentenceIndex + 1);
-		if (this.isPlaying) this.playFrom(nextIdx, 0);
-		else {
-			this.currentSentenceIndex = nextIdx;
-			this.currentWordIndex = 0;
-			this.callbacks.onHighlight(nextIdx, 0);
-		}
+		if (this.allSentences.length === 0) return;
+		const nextIdx = Math.min(this.allSentences.length - 1, this.currentSentenceIndex + 1);
+		const targetOffset = this.allSentences[nextIdx].chapterStartChar;
+		if (this.isPlaying) this.playFromOffset(targetOffset);
+		else this.syncCursorFromOffset(targetOffset);
 	}
 	prevSentence() {
-		if (this.sentences.length === 0) return;
+		if (this.allSentences.length === 0) return;
 		const prevIdx = Math.max(0, this.currentSentenceIndex - 1);
-		if (this.isPlaying) this.playFrom(prevIdx, 0);
-		else {
-			this.currentSentenceIndex = prevIdx;
-			this.currentWordIndex = 0;
-			this.callbacks.onHighlight(prevIdx, 0);
-		}
+		const targetOffset = this.allSentences[prevIdx].chapterStartChar;
+		if (this.isPlaying) this.playFromOffset(targetOffset);
+		else this.syncCursorFromOffset(targetOffset);
+	}
+	nextParagraph() {
+		if (this.paragraphs.length === 0) return;
+		const loc = findLocationAtChapterOffset(this.allSentences, this.currentCharOffset);
+		const nextParaIdx = Math.min(this.paragraphs.length - 1, loc.paragraphIndex + 1);
+		const targetOffset = this.paragraphs[nextParaIdx].chapterStartChar;
+		if (this.isPlaying) this.playFromOffset(targetOffset);
+		else this.syncCursorFromOffset(targetOffset);
+	}
+	prevParagraph() {
+		if (this.paragraphs.length === 0) return;
+		const loc = findLocationAtChapterOffset(this.allSentences, this.currentCharOffset);
+		const currentPara = this.paragraphs[loc.paragraphIndex];
+		const targetParaIdx = this.currentCharOffset > (currentPara?.chapterStartChar ?? 0) + 12 ? loc.paragraphIndex : Math.max(0, loc.paragraphIndex - 1);
+		const targetOffset = this.paragraphs[targetParaIdx].chapterStartChar;
+		if (this.isPlaying) this.playFromOffset(targetOffset);
+		else this.syncCursorFromOffset(targetOffset);
 	}
 	async previewVoice(voiceURI, sampleText) {
 		this.pause();
-		const token = ++this.runToken;
-		await this.speakSingleUtterance(sampleText, voiceURI, token, () => void 0);
+		const token = ++this.sessionToken;
+		if (Capacitor.isNativePlatform()) {
+			await NovelVoiceTts.configureSession({
+				voiceURI,
+				rate: this.settings.rate,
+				pitch: this.settings.pitch
+			}).catch(() => void 0);
+			await NovelVoiceTts.speak({
+				text: sampleText,
+				utteranceId: `preview_${Date.now()}`,
+				queueMode: 0
+			}).catch(() => void 0);
+			return;
+		}
+		if (typeof window !== "undefined" && "speechSynthesis" in window) {
+			window.speechSynthesis.cancel();
+			if (token !== this.sessionToken) return;
+			const utt = this.createWebUtterance(sampleText, voiceURI);
+			window.speechSynthesis.speak(utt);
+		}
 	}
 	destroy() {
 		this.stop();
-		this.nativeListeners.forEach((handle) => void handle.remove());
+		this.nativeListeners.forEach((h) => void h.remove());
 		this.nativeListeners = [];
 	}
-	async runLoop() {
-		const token = ++this.runToken;
-		while (this.isPlaying && this.runToken === token) {
-			if (this.currentSentenceIndex >= this.sentences.length) {
-				this.isPlaying = false;
-				this.callbacks.onPlaybackStateChange(false);
-				if (this.stopAtEndOfChapter) {
-					this.stopAtEndOfChapter = false;
-					this.stop();
-				} else this.callbacks.onChapterComplete();
+	syncCursorFromOffset(charOffset) {
+		const loc = findLocationAtChapterOffset(this.allSentences, charOffset);
+		this.currentCharOffset = loc.chapterOffset;
+		this.currentSentenceIndex = loc.sentenceIndex;
+		this.currentWordIndex = loc.wordIndex;
+		this.callbacks.onHighlight(loc.sentenceIndex, loc.wordIndex, loc.chapterOffset);
+	}
+	async fillLookaheadQueue(token, flushFirst) {
+		if (!this.isPlaying || token !== this.sessionToken) return;
+		while (this.nextEnqueueIdx < this.chunks.length && this.nextEnqueueIdx - this.activeChunkIdx < LOOKAHEAD_DEPTH) {
+			const idx = this.nextEnqueueIdx;
+			const chunk = this.chunks[idx];
+			const useFlush = flushFirst && idx === 0;
+			this.nextEnqueueIdx += 1;
+			if (Capacitor.isNativePlatform()) {
+				const uttId = `nv_${token}_${idx}`;
+				this.utteranceToChunkIdx.set(uttId, idx);
+				await NovelVoiceTts.speak({
+					text: chunk.speakText,
+					utteranceId: uttId,
+					queueMode: useFlush ? 0 : 1
+				}).catch(() => void 0);
+				if (chunk.pauseAfterMs > 0) await NovelVoiceTts.playSilent({
+					durationMs: chunk.pauseAfterMs,
+					utteranceId: `sil_${token}_${idx}`
+				}).catch(() => void 0);
+			} else this.enqueueWebChunk(idx, chunk, token, useFlush);
+		}
+	}
+	enqueueWebChunk(idx, chunk, token, flushFirst) {
+		if (this.webFallbackMode || typeof window === "undefined" || !("speechSynthesis" in window)) {
+			if (idx === this.activeChunkIdx) this.runHeadlessFallbackChunk(idx, chunk, token);
+			return;
+		}
+		if (flushFirst) window.speechSynthesis.cancel();
+		const utt = this.createWebUtterance(chunk.text, this.settings.voiceURI);
+		let started = false;
+		let finished = false;
+		let safetyTimer = null;
+		let initialNoStartTimeout = null;
+		const completeOnce = () => {
+			if (finished) return;
+			finished = true;
+			if (safetyTimer !== null) window.clearTimeout(safetyTimer);
+			if (initialNoStartTimeout !== null) window.clearTimeout(initialNoStartTimeout);
+			if (!this.isPlaying || token !== this.sessionToken) return;
+			this.handleChunkFinished(idx, token);
+		};
+		utt.onstart = () => {
+			started = true;
+			if (initialNoStartTimeout !== null) window.clearTimeout(initialNoStartTimeout);
+			if (!this.isPlaying || token !== this.sessionToken) return;
+			this.onChunkBecameActive(idx, chunk, token);
+			const est = estimateChunkDurationMs(chunk.text, this.settings.rate);
+			safetyTimer = window.setTimeout(completeOnce, Math.max(3e3, est + 2500));
+		};
+		utt.onboundary = (ev) => {
+			if (!this.isPlaying || token !== this.sessionToken) return;
+			if (ev.charIndex >= 0) this.handleBoundaryOffset(chunk, ev.charIndex);
+		};
+		utt.onend = completeOnce;
+		utt.onerror = (ev) => {
+			if (!this.isPlaying || token !== this.sessionToken) return;
+			const errCode = ev.error;
+			if (errCode === "interrupted" || errCode === "canceled") return;
+			if (!started) {
+				this.webFallbackMode = true;
+				if (initialNoStartTimeout !== null) window.clearTimeout(initialNoStartTimeout);
+				finished = true;
+				if (this.activeChunkIdx === idx) this.runHeadlessFallbackChunk(idx, chunk, token);
 				return;
 			}
-			const sentence = this.sentences[this.currentSentenceIndex];
-			const startWord = this.currentWordIndex;
-			this.callbacks.onHighlight(sentence.globalIndex, startWord);
-			if (Capacitor.isNativePlatform()) NovelVoiceTts.updateNotification({
+			completeOnce();
+		};
+		initialNoStartTimeout = window.setTimeout(() => {
+			if (!started && !finished && this.isPlaying && token === this.sessionToken) {
+				this.webFallbackMode = true;
+				finished = true;
+				if (this.activeChunkIdx === idx) this.runHeadlessFallbackChunk(idx, chunk, token);
+			}
+		}, 350);
+		try {
+			window.speechSynthesis.speak(utt);
+		} catch {
+			this.webFallbackMode = true;
+			if (initialNoStartTimeout !== null) window.clearTimeout(initialNoStartTimeout);
+			if (this.activeChunkIdx === idx) this.runHeadlessFallbackChunk(idx, chunk, token);
+		}
+	}
+	runHeadlessFallbackChunk(idx, chunk, token) {
+		this.onChunkBecameActive(idx, chunk, token);
+		const est = estimateChunkDurationMs(chunk.text, this.settings.rate);
+		this.webPauseTimer = window.setTimeout(() => {
+			if (!this.isPlaying || token !== this.sessionToken) return;
+			this.handleChunkFinished(idx, token);
+		}, est);
+	}
+	onChunkBecameActive(idx, chunk, token) {
+		this.activeChunkIdx = idx;
+		this.sawBoundaryForCurrentChunk = false;
+		this.syncCursorFromOffset(chunk.chapterStartChar);
+		this.startFallbackProgressTimer(chunk, token);
+		if (Capacitor.isNativePlatform()) {
+			const preview = this.allSentences[this.currentSentenceIndex]?.text ?? chunk.text.slice(0, 80);
+			NovelVoiceTts.updateNotification({
 				bookTitle: this.bookTitle,
 				chapterTitle: this.chapterTitle,
-				sentencePreview: sentence.text,
+				sentencePreview: preview,
 				isPlaying: true
 			}).catch(() => void 0);
-			const chunks = splitSentenceIntoCommaChunks(sentence.text, this.settings.commaPauseMs, startWord);
-			for (const chunk of chunks) {
-				if (!this.isPlaying || this.runToken !== token) return;
-				this.activeChunk = chunk;
-				this.activeSentence = sentence;
-				this.sawBoundaryForChunk = false;
-				const chunkFirstWord = findWordIndexAtCharOffset(sentence.words, chunk.startCharOffset);
-				this.currentWordIndex = chunkFirstWord;
-				this.callbacks.onHighlight(sentence.globalIndex, chunkFirstWord);
-				this.startFallbackWordTimer(sentence, chunk, token);
-				await this.speakSingleUtterance(chunk.text, this.settings.voiceURI, token, (localCharOffset) => {
-					if (!this.isPlaying || this.runToken !== token) return;
-					this.sawBoundaryForChunk = true;
-					this.clearFallbackWordTimer();
-					const wordIdx = findWordIndexAtCharOffset(sentence.words, chunk.startCharOffset + localCharOffset);
-					this.currentWordIndex = wordIdx;
-					this.callbacks.onHighlight(sentence.globalIndex, wordIdx);
-				});
-				this.clearFallbackWordTimer();
-				if (!this.isPlaying || this.runToken !== token) return;
-				if (chunk.pauseAfterMs > 0) await this.waitMs(chunk.pauseAfterMs, token);
+		}
+	}
+	handleBoundaryOffset(chunk, localCharOffset) {
+		this.sawBoundaryForCurrentChunk = true;
+		this.clearFallbackProgressTimer();
+		const chapterOffset = mapChunkLocalOffsetToChapterOffset(chunk, localCharOffset);
+		this.syncCursorFromOffset(chapterOffset);
+	}
+	handleChunkFinished(idx, token) {
+		if (!this.isPlaying || token !== this.sessionToken) return;
+		this.clearFallbackProgressTimer();
+		if (this.chunks[idx]) {
+			const nextChunk = this.chunks[idx + 1];
+			if (nextChunk) this.syncCursorFromOffset(nextChunk.chapterStartChar);
+		}
+		if (idx >= this.chunks.length - 1) {
+			this.isPlaying = false;
+			this.callbacks.onPlaybackStateChange(false);
+			if (this.stopAtEndOfChapter) {
+				this.stopAtEndOfChapter = false;
+				this.stop();
+			} else this.callbacks.onChapterComplete();
+			return;
+		}
+		this.activeChunkIdx = idx + 1;
+		if (this.webFallbackMode && this.activeChunkIdx < this.chunks.length) {
+			this.nextEnqueueIdx = Math.max(this.nextEnqueueIdx, this.activeChunkIdx + 1);
+			this.runHeadlessFallbackChunk(this.activeChunkIdx, this.chunks[this.activeChunkIdx], token);
+			return;
+		}
+		this.fillLookaheadQueue(token, false);
+	}
+	startFallbackProgressTimer(chunk, token) {
+		this.clearFallbackProgressTimer();
+		const totalMs = estimateChunkDurationMs(chunk.text, this.settings.rate);
+		const startTs = performance.now();
+		const totalLen = Math.max(1, chunk.text.length);
+		this.fallbackProgressTimer = window.setInterval(() => {
+			if (!this.isPlaying || token !== this.sessionToken || this.sawBoundaryForCurrentChunk) {
+				this.clearFallbackProgressTimer();
+				return;
 			}
-			if (!this.isPlaying || this.runToken !== token) return;
-			await this.waitMs(300, token);
-			if (!this.isPlaying || this.runToken !== token) return;
-			this.currentSentenceIndex += 1;
-			this.currentWordIndex = 0;
-		}
+			const elapsed = performance.now() - startTs;
+			const ratio = Math.min(.98, elapsed / totalMs);
+			const chapterOffset = mapChunkLocalOffsetToChapterOffset(chunk, Math.floor(ratio * totalLen));
+			this.syncCursorFromOffset(chapterOffset);
+		}, 160);
 	}
-	startFallbackWordTimer(sentence, chunk, token) {
-		this.clearFallbackWordTimer();
-		const chunkWords = sentence.words.filter((w) => w.startChar >= chunk.startCharOffset && w.startChar < chunk.endCharOffset);
-		if (chunkWords.length <= 1) return;
-		let idx = 0;
-		const scheduleNext = () => {
-			if (!this.isPlaying || this.runToken !== token || this.sawBoundaryForChunk) return;
-			if (idx >= chunkWords.length - 1) return;
-			const currentW = chunkWords[idx];
-			const delay = estimateWordDurationMs(currentW.text, this.settings.rate);
-			this.fallbackWordTimer = window.setTimeout(() => {
-				if (!this.isPlaying || this.runToken !== token || this.sawBoundaryForChunk) return;
-				idx += 1;
-				const nextWord = chunkWords[idx];
-				this.currentWordIndex = nextWord.wordIndex;
-				this.callbacks.onHighlight(sentence.globalIndex, nextWord.wordIndex);
-				scheduleNext();
-			}, delay);
-		};
-		scheduleNext();
-	}
-	speakSingleUtterance(text, voiceURI, token, onBoundary) {
-		if (Capacitor.isNativePlatform()) return new Promise((resolve) => {
-			const utteranceId = `utt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-			this.activeUtteranceId = utteranceId;
-			this.activeChunkResolve = resolve;
-			NovelVoiceTts.speak({
-				text,
-				voiceURI,
-				rate: this.settings.rate,
-				pitch: this.settings.pitch,
-				utteranceId,
-				bookTitle: this.bookTitle,
-				chapterTitle: this.chapterTitle,
-				sentencePreview: this.activeSentence?.text ?? text
-			}).catch(() => {
-				TextToSpeech.speak({
-					text,
-					rate: this.settings.rate,
-					pitch: this.settings.pitch
-				}).catch(() => void 0).finally(() => {
-					if (this.activeChunkResolve === resolve) this.activeChunkResolve = null;
-					resolve();
-				});
-			});
-		});
-		if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-			const approxMs = Math.max(600, Math.round(text.split(/\s+/).length * 310 / this.settings.rate));
-			return this.waitMs(approxMs, token);
+	createWebUtterance(text, voiceURI) {
+		const utt = new SpeechSynthesisUtterance(text);
+		utt.rate = Math.max(.5, Math.min(3, this.settings.rate));
+		utt.pitch = Math.max(.5, Math.min(1.8, this.settings.pitch));
+		const voices = window.speechSynthesis.getVoices();
+		const matched = voiceURI ? voices.find((v) => v.voiceURI === voiceURI) : voices.find((v) => v.lang.toLowerCase().startsWith("id")) || voices[0];
+		if (matched) {
+			utt.voice = matched;
+			utt.lang = matched.lang;
 		}
-		return new Promise((resolve) => {
-			let settled = false;
-			const finish = () => {
-				if (settled) return;
-				settled = true;
-				window.clearTimeout(safetyTimeout);
-				resolve();
-			};
-			const utterance = new SpeechSynthesisUtterance(text);
-			utterance.rate = this.settings.rate;
-			utterance.pitch = this.settings.pitch;
-			const voices = window.speechSynthesis.getVoices();
-			const matchedVoice = voiceURI ? voices.find((v) => v.voiceURI === voiceURI) : voices.find((v) => v.lang.toLowerCase().startsWith("id")) || voices[0];
-			if (matchedVoice) {
-				utterance.voice = matchedVoice;
-				utterance.lang = matchedVoice.lang;
-			}
-			utterance.onboundary = (ev) => {
-				if (ev.name === "word" || ev.charIndex >= 0) onBoundary(ev.charIndex);
-			};
-			utterance.onend = finish;
-			utterance.onerror = finish;
-			const estimatedTotalMs = Math.max(1800, Math.round(text.split(/\s+/).length * 460 / Math.max(.5, this.settings.rate)) + 1500);
-			const safetyTimeout = window.setTimeout(finish, estimatedTotalMs);
-			try {
-				window.speechSynthesis.cancel();
-				window.speechSynthesis.speak(utterance);
-			} catch {
-				finish();
-			}
-		});
+		return utt;
 	}
-	waitMs(ms, token) {
-		if (ms <= 0) return Promise.resolve();
-		return new Promise((resolve) => {
-			this.pauseTimer = window.setTimeout(() => {
-				this.pauseTimer = null;
-				if (this.runToken === token) resolve();
-				else resolve();
-			}, ms);
-		});
-	}
-	cancelActiveSpeechOnly() {
-		this.clearFallbackWordTimer();
-		if (this.pauseTimer !== null) {
-			window.clearTimeout(this.pauseTimer);
-			this.pauseTimer = null;
+	cancelActiveQueueOnly() {
+		this.clearFallbackProgressTimer();
+		if (this.webPauseTimer !== null) {
+			window.clearTimeout(this.webPauseTimer);
+			this.webPauseTimer = null;
 		}
-		if (this.activeChunkResolve) {
-			const resolve = this.activeChunkResolve;
-			this.activeChunkResolve = null;
-			resolve();
-		}
+		this.utteranceToChunkIdx.clear();
 		if (Capacitor.isNativePlatform()) NovelVoiceTts.stop().catch(() => void 0);
 		else if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
 	}
-	clearFallbackWordTimer() {
-		if (this.fallbackWordTimer !== null) {
-			window.clearTimeout(this.fallbackWordTimer);
-			this.fallbackWordTimer = null;
+	clearFallbackProgressTimer() {
+		if (this.fallbackProgressTimer !== null) {
+			window.clearInterval(this.fallbackProgressTimer);
+			this.fallbackProgressTimer = null;
 		}
 	}
 	clearSleepTimer() {
@@ -38980,7 +39256,7 @@ var AppearanceSheet = ({ open, settings, onUpdate, onClose }) => {
 	});
 };
 // src/components/ReaderControlsBar.tsx
-var ReaderControlsBar = ({ isPlaying, currentSentenceIndex, totalSentences, sleepRemainingSec, sleepTimerMode, commaPauseMs, rate, onTogglePlay, onPrevSentence, onNextSentence, onOpenTtsSettings }) => {
+var ReaderControlsBar = ({ isPlaying, currentSentenceIndex, totalSentences, sleepRemainingSec, sleepTimerMode, readingMode, rate, onTogglePlay, onPrevSentence, onNextSentence, onPrevParagraph, onNextParagraph, onOpenTtsSettings }) => {
 	const displayIndex = Math.min(Math.max(1, totalSentences), currentSentenceIndex + 1);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("footer", {
 		className: "sticky bottom-0 z-30 border-t border-[var(--nv-border)] bg-[var(--nv-surface)]/95 backdrop-blur-md pb-safe",
@@ -39001,9 +39277,8 @@ var ReaderControlsBar = ({ isPlaying, currentSentenceIndex, totalSentences, slee
 						className: "truncate text-[11px] text-[var(--nv-muted)] tabular-nums",
 						children: [
 							rate.toFixed(1),
-							"× · Jeda ",
-							commaPauseMs,
-							"ms",
+							"× · ",
+							readingMode === "flowing" ? "Mengalir" : "Per kalimat",
 							sleepRemainingSec !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
 								" ",
 								"· ",
@@ -39021,12 +39296,24 @@ var ReaderControlsBar = ({ isPlaying, currentSentenceIndex, totalSentences, slee
 					})]
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex items-center gap-1.5 shrink-0",
+					className: "flex items-center gap-1 shrink-0",
 					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							onClick: onPrevParagraph,
+							"aria-label": "Paragraf sebelumnya",
+							title: "Paragraf sebelumnya",
+							className: "hidden sm:inline-flex min-h-[44px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5",
+							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronsLeft, {
+								className: "h-4 w-4",
+								"aria-hidden": "true"
+							})
+						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 							type: "button",
 							onClick: onPrevSentence,
 							"aria-label": "Kalimat sebelumnya",
+							title: "Kalimat sebelumnya",
 							className: "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5",
 							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SkipBack, {
 								className: "h-5 w-5",
@@ -39050,9 +39337,21 @@ var ReaderControlsBar = ({ isPlaying, currentSentenceIndex, totalSentences, slee
 							type: "button",
 							onClick: onNextSentence,
 							"aria-label": "Kalimat berikutnya",
+							title: "Kalimat berikutnya",
 							className: "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5",
 							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SkipForward, {
 								className: "h-5 w-5",
+								"aria-hidden": "true"
+							})
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							onClick: onNextParagraph,
+							"aria-label": "Paragraf berikutnya",
+							title: "Paragraf berikutnya",
+							className: "hidden sm:inline-flex min-h-[44px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5",
+							children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronsRight, {
+								className: "h-4 w-4",
 								"aria-hidden": "true"
 							})
 						})
@@ -39255,7 +39554,7 @@ var SLEEP_OPTIONS = [
 		label: "Akhir Bab"
 	}
 ];
-var TtsSettingsSheet = ({ open, settings, voices, notificationStatus, sleepRemainingSec, onUpdate, onPreviewVoice, onOpenAndroidTtsSettings, onRequestNotificationPermission, onClose }) => {
+var TtsSettingsSheet = ({ open, settings, voices, engineCapabilities, notificationStatus, sleepRemainingSec, onUpdate, onPreviewVoice, onOpenAndroidTtsSettings, onRequestNotificationPermission, onClose }) => {
 	const [engineFeedback, setEngineFeedback] = (0, import_react.useState)(null);
 	const availableLanguages = (0, import_react.useMemo)(() => {
 		const langs = /* @__PURE__ */ new Set();
@@ -39274,6 +39573,7 @@ var TtsSettingsSheet = ({ open, settings, voices, notificationStatus, sleepRemai
 		if (!res.opened && res.message) setEngineFeedback(res.message);
 		else setEngineFeedback(null);
 	};
+	const ssmlDisabled = !engineCapabilities.ssmlSupported;
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 		role: "dialog",
 		"aria-modal": "true",
@@ -39310,6 +39610,52 @@ var TtsSettingsSheet = ({ open, settings, voices, notificationStatus, sleepRemai
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 					className: "max-h-[78vh] space-y-5 overflow-y-auto p-5 pb-safe",
 					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "mb-2 text-xs font-semibold text-[var(--nv-muted)]",
+								children: "Mode Baca TTS"
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "grid grid-cols-2 gap-2",
+								children: [{
+									id: "flowing",
+									label: "Mengalir (disarankan)"
+								}, {
+									id: "sentence",
+									label: "Per kalimat"
+								}].map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+									type: "button",
+									onClick: () => onUpdate({ readingMode: mode.id }),
+									className: `min-h-[44px] rounded-xl border px-3 text-xs font-semibold transition-colors ${settings.readingMode === mode.id ? "border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]" : "border-[var(--nv-border)] hover:bg-black/5 dark:hover:bg-white/5"}`,
+									children: mode.label
+								}, mode.id))
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "mt-1.5 text-xs text-[var(--nv-muted)]",
+								children: "Mode Mengalir mengirim paragraf utuh dengan antrean tanpa celah agar intonasi alami."
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "mb-1.5 flex items-center justify-between",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+								htmlFor: "tts-chunk-size",
+								className: "text-xs font-semibold text-[var(--nv-muted)]",
+								children: "Ukuran Potongan"
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+								className: "text-xs font-semibold tabular-nums",
+								children: [settings.chunkSizeChars, " karakter"]
+							})]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							id: "tts-chunk-size",
+							type: "range",
+							min: 300,
+							max: 3e3,
+							step: 100,
+							disabled: settings.readingMode === "sentence",
+							value: settings.chunkSizeChars,
+							onChange: (e) => onUpdate({ chunkSizeChars: Number(e.target.value) }),
+							className: "h-2 w-full accent-[var(--nv-accent)] disabled:opacity-40"
+						})] }),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "grid grid-cols-1 gap-4 sm:grid-cols-2",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -39326,8 +39672,8 @@ var TtsSettingsSheet = ({ open, settings, voices, notificationStatus, sleepRemai
 								id: "tts-rate",
 								type: "range",
 								min: .5,
-								max: 2,
-								step: .05,
+								max: 3,
+								step: .1,
 								value: settings.rate,
 								onChange: (e) => onUpdate({ rate: Number(e.target.value) }),
 								className: "h-2 w-full accent-[var(--nv-accent)]"
@@ -39352,33 +39698,83 @@ var TtsSettingsSheet = ({ open, settings, voices, notificationStatus, sleepRemai
 								className: "h-2 w-full accent-[var(--nv-accent)]"
 							})] })]
 						}),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "mb-1.5 flex items-center justify-between",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
-									htmlFor: "tts-comma-pause",
-									className: "text-xs font-semibold text-[var(--nv-muted)]",
-									children: "Jeda Natural di Koma (, ; :)"
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-									className: "text-xs font-semibold tabular-nums",
-									children: [settings.commaPauseMs, " ms"]
-								})]
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-								id: "tts-comma-pause",
-								type: "range",
-								min: 0,
-								max: 500,
-								step: 10,
-								value: settings.commaPauseMs,
-								onChange: (e) => onUpdate({ commaPauseMs: Number(e.target.value) }),
-								className: "h-2 w-full accent-[var(--nv-accent)]"
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-								className: "mt-1 text-xs text-[var(--nv-muted)]",
-								children: "Rekomendasi natural: 150–250 ms agar jeda koma terasa halus tanpa terputus lama."
-							})
-						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "mb-1.5 flex items-center justify-between",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+								htmlFor: "tts-para-pause",
+								className: "text-xs font-semibold text-[var(--nv-muted)]",
+								children: "Jeda Antar Paragraf"
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+								className: "text-xs font-semibold tabular-nums",
+								children: [settings.paragraphPauseMs, " ms"]
+							})]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							id: "tts-para-pause",
+							type: "range",
+							min: 0,
+							max: 800,
+							step: 50,
+							value: settings.paragraphPauseMs,
+							onChange: (e) => onUpdate({ paragraphPauseMs: Number(e.target.value) }),
+							className: "h-2 w-full accent-[var(--nv-accent)]"
+						})] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-3.5 space-y-3",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex items-center justify-between gap-2",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+										className: "text-xs font-semibold",
+										children: "Jeda Tambahan (SSML)"
+									}), ssmlDisabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "text-[11px] font-medium text-[var(--nv-muted)]",
+										children: "Tidak didukung mesin TTS ini"
+									})]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "mb-1 flex items-center justify-between",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+										htmlFor: "tts-comma-pause",
+										className: "text-xs text-[var(--nv-muted)]",
+										children: "Jeda Tambahan Koma"
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "text-xs font-semibold tabular-nums",
+										children: settings.commaPauseMs === 0 ? "0 ms (Alami)" : `${settings.commaPauseMs} ms`
+									})]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+									id: "tts-comma-pause",
+									type: "range",
+									min: 0,
+									max: 300,
+									step: 25,
+									disabled: ssmlDisabled,
+									value: settings.commaPauseMs,
+									onChange: (e) => onUpdate({ commaPauseMs: Number(e.target.value) }),
+									className: "h-2 w-full accent-[var(--nv-accent)] disabled:opacity-40"
+								})] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "mb-1 flex items-center justify-between",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+										htmlFor: "tts-sentence-pause",
+										className: "text-xs text-[var(--nv-muted)]",
+										children: "Jeda Tambahan Akhir Kalimat"
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "text-xs font-semibold tabular-nums",
+										children: settings.sentencePauseMs === 0 ? "0 ms (Alami)" : `${settings.sentencePauseMs} ms`
+									})]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+									id: "tts-sentence-pause",
+									type: "range",
+									min: 0,
+									max: 600,
+									step: 50,
+									disabled: ssmlDisabled,
+									value: settings.sentencePauseMs,
+									onChange: (e) => onUpdate({ sentencePauseMs: Number(e.target.value) }),
+									className: "h-2 w-full accent-[var(--nv-accent)] disabled:opacity-40"
+								})] })
+							]
+						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "mb-2 flex items-center justify-between",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
@@ -39525,6 +39921,7 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 	const [allSentences, setAllSentences] = (0, import_react.useState)([]);
 	const [activeSentenceIdx, setActiveSentenceIdx] = (0, import_react.useState)(0);
 	const [activeWordIdx, setActiveWordIdx] = (0, import_react.useState)(0);
+	const [activeCharOffset, setActiveCharOffset] = (0, import_react.useState)(0);
 	const [isPlaying, setIsPlaying] = (0, import_react.useState)(false);
 	const [isLoadingBook, setIsLoadingBook] = (0, import_react.useState)(true);
 	const [loadError, setLoadError] = (0, import_react.useState)(null);
@@ -39534,6 +39931,10 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 	const [appearanceOpen, setAppearanceOpen] = (0, import_react.useState)(false);
 	const [ttsSheetOpen, setTtsSheetOpen] = (0, import_react.useState)(false);
 	const [voices, setVoices] = (0, import_react.useState)([]);
+	const [engineCapabilities, setEngineCapabilities] = (0, import_react.useState)({
+		maxSpeechInputLength: 3500,
+		ssmlSupported: false
+	});
 	const [notificationStatus, setNotificationStatus] = (0, import_react.useState)({
 		granted: true,
 		sdkInt: 0,
@@ -39552,14 +39953,17 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 	const chaptersRef = (0, import_react.useRef)(chapters);
 	const activeSentenceRef = (0, import_react.useRef)(activeSentenceIdx);
 	const activeWordRef = (0, import_react.useRef)(activeWordIdx);
+	const activeOffsetRef = (0, import_react.useRef)(activeCharOffset);
 	chapterIndexRef.current = chapterIndex;
 	chaptersRef.current = chapters;
 	activeSentenceRef.current = activeSentenceIdx;
 	activeWordRef.current = activeWordIdx;
-	const persistPosition = (0, import_react.useCallback)(async (cIdx, sIdx, wIdx, totalChaps) => {
+	activeOffsetRef.current = activeCharOffset;
+	const persistPosition = (0, import_react.useCallback)(async (cIdx, charOffset, sIdx, wIdx, totalChaps) => {
 		await saveReadingPosition({
 			bookId: bookMeta.id,
 			chapterIndex: cIdx,
+			charOffset,
 			sentenceIndex: sIdx,
 			wordIndex: wIdx,
 			scrollRatio: 0,
@@ -39581,15 +39985,16 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 	]);
 	(0, import_react.useEffect)(() => {
 		const controller = new TtsPlaybackController(ttsSettings, {
-			onHighlight: (sIdx, wIdx) => {
+			onHighlight: (sIdx, wIdx, charOffset) => {
 				setActiveSentenceIdx(sIdx);
 				setActiveWordIdx(wIdx);
+				setActiveCharOffset(charOffset);
 			},
 			onPlaybackStateChange: (playing) => {
 				setIsPlaying(playing);
 				if (!playing) {
 					const pos = controller.getPosition();
-					persistPosition(chapterIndexRef.current, pos.sentenceIndex, pos.wordIndex, chaptersRef.current.length || bookMeta.totalChapters);
+					persistPosition(chapterIndexRef.current, pos.charOffset, pos.sentenceIndex, pos.wordIndex, chaptersRef.current.length || bookMeta.totalChapters);
 				}
 			},
 			onChapterComplete: () => {
@@ -39602,12 +40007,17 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 		});
 		controllerRef.current = controller;
 		getSystemVoices().then(setVoices);
+		getTtsEngineCapabilities().then((caps) => {
+			setEngineCapabilities(caps);
+			controller.setCapabilities(caps);
+		});
 		checkAndroidNotificationPermission().then(setNotificationStatus);
 		return () => {
 			const pos = controller.getPosition();
 			saveReadingPosition({
 				bookId: bookMeta.id,
 				chapterIndex: chapterIndexRef.current,
+				charOffset: pos.charOffset,
 				sentenceIndex: pos.sentenceIndex,
 				wordIndex: pos.wordIndex,
 				scrollRatio: 0,
@@ -39640,17 +40050,20 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 				setToc(opened.toc);
 				const savedPos = await getReadingPosition(bookMeta.id);
 				const startChap = savedPos ? Math.min(savedPos.chapterIndex, Math.max(0, opened.chapters.length - 1)) : Math.min(bookMeta.currentChapterIndex || 0, Math.max(0, opened.chapters.length - 1));
-				const segs = await loadChapterSegments(opened.book, startChap);
+				const segs = await loadChapterSegments(opened.book, startChap, bookMeta.language || "id");
 				if (cancelled) return;
-				const startSentence = savedPos ? Math.min(savedPos.sentenceIndex, Math.max(0, segs.allSentences.length - 1)) : 0;
-				const startWord = savedPos ? savedPos.wordIndex : 0;
+				let initialOffset = 0;
+				if (savedPos && typeof savedPos.charOffset === "number" && savedPos.charOffset > 0) initialOffset = savedPos.charOffset;
+				else if (savedPos && savedPos.sentenceIndex > 0 && segs.allSentences.length > 0) initialOffset = segs.allSentences[Math.min(savedPos.sentenceIndex, segs.allSentences.length - 1)]?.chapterStartChar ?? 0;
+				const loc = findLocationAtChapterOffset(segs.allSentences, initialOffset);
 				setChapterIndex(startChap);
 				setParagraphs(segs.paragraphs);
 				setAllSentences(segs.allSentences);
-				setActiveSentenceIdx(startSentence);
-				setActiveWordIdx(startWord);
+				setActiveSentenceIdx(loc.sentenceIndex);
+				setActiveWordIdx(loc.wordIndex);
+				setActiveCharOffset(loc.chapterOffset);
 				const chapTitle = opened.chapters[startChap]?.title || segs.chapterTitle || `Bab ${startChap + 1}`;
-				controllerRef.current?.setBookContext(bookMeta.title, chapTitle, segs.allSentences, startSentence, startWord);
+				controllerRef.current?.setBookContext(bookMeta.title, chapTitle, segs.paragraphs, segs.allSentences, loc.chapterOffset);
 			} catch (err) {
 				if (!cancelled) setLoadError(err instanceof Error ? err.message : "Gagal membuka berkas EPUB.");
 			} finally {
@@ -39665,26 +40078,29 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 	}, [
 		bookMeta.id,
 		bookMeta.title,
+		bookMeta.language,
 		bookMeta.currentChapterIndex
 	]);
 	const handleSelectChapter = (0, import_react.useCallback)(async (targetIndex, autoPlayAfterLoad = false) => {
 		if (!openedEpub) return;
 		const clamped = Math.max(0, Math.min(targetIndex, openedEpub.chapters.length - 1));
 		controllerRef.current?.pause();
-		const segs = await loadChapterSegments(openedEpub.book, clamped);
+		const segs = await loadChapterSegments(openedEpub.book, clamped, bookMeta.language || "id");
 		setChapterIndex(clamped);
 		setParagraphs(segs.paragraphs);
 		setAllSentences(segs.allSentences);
 		setActiveSentenceIdx(0);
 		setActiveWordIdx(0);
+		setActiveCharOffset(0);
 		setPageIndex(0);
 		setInlineTranslations({});
 		setSelectedSentenceIdx(null);
 		const chapTitle = openedEpub.chapters[clamped]?.title || segs.chapterTitle || `Bab ${clamped + 1}`;
-		controllerRef.current?.setBookContext(bookMeta.title, chapTitle, segs.allSentences, 0, 0);
-		await persistPosition(clamped, 0, 0, openedEpub.chapters.length);
-		if (autoPlayAfterLoad && segs.allSentences.length > 0) controllerRef.current?.playFrom(0, 0);
+		controllerRef.current?.setBookContext(bookMeta.title, chapTitle, segs.paragraphs, segs.allSentences, 0);
+		await persistPosition(clamped, 0, 0, 0, openedEpub.chapters.length);
+		if (autoPlayAfterLoad && segs.allSentences.length > 0) controllerRef.current?.playFromOffset(0);
 	}, [
+		bookMeta.language,
 		bookMeta.title,
 		openedEpub,
 		persistPosition
@@ -39753,7 +40169,7 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 	};
 	const handleReadFromSentence = (sentenceIdx) => {
 		setSelectedSentenceIdx(null);
-		controllerRef.current?.playFrom(sentenceIdx, 0);
+		controllerRef.current?.playFromSentence(sentenceIdx);
 	};
 	const handleTogglePlay = () => {
 		if (!controllerRef.current) return;
@@ -39793,7 +40209,7 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 							type: "button",
 							onClick: () => {
 								controllerRef.current?.pause();
-								persistPosition(chapterIndexRef.current, activeSentenceRef.current, activeWordRef.current, chapters.length || bookMeta.totalChapters);
+								persistPosition(chapterIndexRef.current, activeOffsetRef.current, activeSentenceRef.current, activeWordRef.current, chapters.length || bookMeta.totalChapters);
 								onBackToLibrary();
 							},
 							"aria-label": "Kembali ke Rak Buku",
@@ -39943,16 +40359,16 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 								if (pageIndex > 0) setPageIndex((p) => p - 1);
 								else if (chapterIndex > 0) handleSelectChapter(chapterIndex - 1);
 							},
-							className: "inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium disabled:opacity-40",
+							className: "inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-[var(--nv-border)] px-3 sm:px-4 text-xs sm:text-sm font-medium disabled:opacity-40 whitespace-nowrap shrink-0",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, {
-								className: "h-4 w-4",
+								className: "h-4 w-4 shrink-0",
 								"aria-hidden": "true"
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Sebelumnya" })]
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-							className: "text-xs font-medium text-[var(--nv-muted)] tabular-nums",
+							className: "text-xs font-medium text-[var(--nv-muted)] tabular-nums whitespace-nowrap shrink-0",
 							children: [
-								"Halaman ",
+								"Hal ",
 								pageIndex + 1,
 								" / ",
 								totalPages
@@ -39965,9 +40381,9 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 								if (pageIndex < totalPages - 1) setPageIndex((p) => p + 1);
 								else if (chapterIndex < chapters.length - 1) handleSelectChapter(chapterIndex + 1);
 							},
-							className: "inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium disabled:opacity-40",
+							className: "inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-[var(--nv-border)] px-3 sm:px-4 text-xs sm:text-sm font-medium disabled:opacity-40 whitespace-nowrap shrink-0",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Berikutnya" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-								className: "h-4 w-4",
+								className: "h-4 w-4 shrink-0",
 								"aria-hidden": "true"
 							})]
 						})
@@ -39976,14 +40392,14 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 							type: "button",
 							disabled: chapterIndex <= 0,
 							onClick: () => void handleSelectChapter(chapterIndex - 1),
-							className: "inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium disabled:opacity-40",
+							className: "inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-[var(--nv-border)] px-3 sm:px-4 text-xs sm:text-sm font-medium disabled:opacity-40 whitespace-nowrap shrink-0",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, {
-								className: "h-4 w-4",
+								className: "h-4 w-4 shrink-0",
 								"aria-hidden": "true"
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Bab Sebelumnya" })]
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-							className: "text-xs font-medium text-[var(--nv-muted)] tabular-nums",
+							className: "text-xs font-medium text-[var(--nv-muted)] tabular-nums whitespace-nowrap shrink-0",
 							children: [
 								"Bab ",
 								chapterIndex + 1,
@@ -39995,9 +40411,9 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 							type: "button",
 							disabled: chapterIndex >= chapters.length - 1,
 							onClick: () => void handleSelectChapter(chapterIndex + 1),
-							className: "inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium disabled:opacity-40",
+							className: "inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-[var(--nv-border)] px-3 sm:px-4 text-xs sm:text-sm font-medium disabled:opacity-40 whitespace-nowrap shrink-0",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Bab Berikutnya" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, {
-								className: "h-4 w-4",
+								className: "h-4 w-4 shrink-0",
 								"aria-hidden": "true"
 							})]
 						})
@@ -40010,11 +40426,13 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 				totalSentences: allSentences.length,
 				sleepRemainingSec,
 				sleepTimerMode: ttsSettings.sleepTimerMinutes,
-				commaPauseMs: ttsSettings.commaPauseMs,
+				readingMode: ttsSettings.readingMode,
 				rate: ttsSettings.rate,
 				onTogglePlay: handleTogglePlay,
 				onPrevSentence: () => controllerRef.current?.prevSentence(),
 				onNextSentence: () => controllerRef.current?.nextSentence(),
+				onPrevParagraph: () => controllerRef.current?.prevParagraph(),
+				onNextParagraph: () => controllerRef.current?.nextParagraph(),
 				onOpenTtsSettings: () => setTtsSheetOpen(true)
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(TranslationPopup, {
@@ -40052,11 +40470,12 @@ var ReaderView = ({ bookMeta, readerSettings, ttsSettings, onUpdateReaderSetting
 				open: ttsSheetOpen,
 				settings: ttsSettings,
 				voices,
+				engineCapabilities,
 				notificationStatus,
 				sleepRemainingSec,
 				onUpdate: onUpdateTtsSettings,
 				onPreviewVoice: (voiceURI) => {
-					const sample = bookMeta.language.startsWith("en") ? "This is a preview of the selected reading voice, with natural pauses." : "Ini adalah contoh suara pembacaan NovelVoice, dengan jeda koma yang terasa natural.";
+					const sample = bookMeta.language.startsWith("en") ? "This is a preview of the selected reading voice, flowing smoothly across sentences." : "Ini adalah contoh suara pembacaan NovelVoice yang mengalir alami antar kalimat.";
 					controllerRef.current?.previewVoice(voiceURI, sample);
 				},
 				onOpenAndroidTtsSettings: openNativeTtsSettings,
@@ -43448,4 +43867,3 @@ function App() {
 }
 // src/main.tsx
 (0, import_client.createRoot)(document.getElementById("root")).render(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(App, {}));
-export { WebPlugin as t };

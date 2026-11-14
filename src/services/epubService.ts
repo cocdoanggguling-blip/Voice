@@ -170,7 +170,8 @@ export async function openEpubForReading(buffer: ArrayBuffer): Promise<OpenedEpu
  */
 export async function loadChapterSegments(
   book: Book,
-  chapterIndex: number
+  chapterIndex: number,
+  locale = 'id'
 ): Promise<{ paragraphs: ParsedParagraph[]; allSentences: SentenceSegment[]; chapterTitle?: string }> {
   const section = book.spine.get(chapterIndex);
   if (!section) {
@@ -227,7 +228,7 @@ export async function loadChapterSegments(
     });
   }
 
-  const segmented = segmentParagraphs(entries);
+  const segmented = segmentParagraphs(entries, locale);
   section.unload();
 
   return {

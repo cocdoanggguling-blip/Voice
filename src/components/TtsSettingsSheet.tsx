@@ -1,12 +1,18 @@
 import React, { useMemo, useState } from 'react';
 import { Bell, ExternalLink, Moon, Play, Volume2, X } from 'lucide-react';
 import type { NotificationPermissionStatus } from '../services/ttsBridge';
-import type { TtsSettings, TtsVoiceInfo } from '../types/reader';
+import type {
+  TtsEngineCapabilities,
+  TtsReadingMode,
+  TtsSettings,
+  TtsVoiceInfo,
+} from '../types/reader';
 
 interface TtsSettingsSheetProps {
   open: boolean;
   settings: TtsSettings;
   voices: TtsVoiceInfo[];
+  engineCapabilities: TtsEngineCapabilities;
   notificationStatus: NotificationPermissionStatus;
   sleepRemainingSec: number | null;
   onUpdate: (patch: Partial<TtsSettings>) => void;
@@ -31,6 +37,7 @@ export const TtsSettingsSheet: React.FC<TtsSettingsSheetProps> = ({
   open,
   settings,
   voices,
+  engineCapabilities,
   notificationStatus,
   sleepRemainingSec,
   onUpdate,
@@ -67,6 +74,8 @@ export const TtsSettingsSheet: React.FC<TtsSettingsSheetProps> = ({
     }
   };
 
+  const ssmlDisabled = !engineCapabilities.ssmlSupported;
+
   return (
     <div
       role="dialog"
@@ -97,7 +106,59 @@ export const TtsSettingsSheet: React.FC<TtsSettingsSheetProps> = ({
         </div>
 
         <div className="max-h-[78vh] space-y-5 overflow-y-auto p-5 pb-safe">
-          {/* Speed & Pitch */}
+          {/* Mode Baca */}
+          <div>
+            <p className="mb-2 text-xs font-semibold text-[var(--nv-muted)]">Mode Baca TTS</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  { id: 'flowing', label: 'Mengalir (disarankan)' },
+                  { id: 'sentence', label: 'Per kalimat' },
+                ] as Array<{ id: TtsReadingMode; label: string }>
+              ).map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => onUpdate({ readingMode: mode.id })}
+                  className={`min-h-[44px] rounded-xl border px-3 text-xs font-semibold transition-colors ${
+                    settings.readingMode === mode.id
+                      ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
+                      : 'border-[var(--nv-border)] hover:bg-black/5 dark:hover:bg-white/5'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-[var(--nv-muted)]">
+              Mode Mengalir mengirim paragraf utuh dengan antrean tanpa celah agar intonasi alami.
+            </p>
+          </div>
+
+          {/* Ukuran Potongan (Flowing mode) */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label htmlFor="tts-chunk-size" className="text-xs font-semibold text-[var(--nv-muted)]">
+                Ukuran Potongan
+              </label>
+              <span className="text-xs font-semibold tabular-nums">
+                {settings.chunkSizeChars} karakter
+              </span>
+            </div>
+            <input
+              id="tts-chunk-size"
+              type="range"
+              min={300}
+              max={3000}
+              step={100}
+              disabled={settings.readingMode === 'sentence'}
+              value={settings.chunkSizeChars}
+              onChange={(e) => onUpdate({ chunkSizeChars: Number(e.target.value) })}
+              className="h-2 w-full accent-[var(--nv-accent)] disabled:opacity-40"
+            />
+          </div>
+
+          {/* Speed (0.5x - 3.0x) & Pitch */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <div className="mb-1.5 flex items-center justify-between">
@@ -112,8 +173,8 @@ export const TtsSettingsSheet: React.FC<TtsSettingsSheetProps> = ({
                 id="tts-rate"
                 type="range"
                 min={0.5}
-                max={2.0}
-                step={0.05}
+                max={3.0}
+                step={0.1}
                 value={settings.rate}
                 onChange={(e) => onUpdate({ rate: Number(e.target.value) })}
                 className="h-2 w-full accent-[var(--nv-accent)]"
@@ -142,29 +203,82 @@ export const TtsSettingsSheet: React.FC<TtsSettingsSheetProps> = ({
             </div>
           </div>
 
-          {/* Natural Comma Pause */}
+          {/* Jeda Antar Paragraf */}
           <div>
             <div className="mb-1.5 flex items-center justify-between">
-              <label htmlFor="tts-comma-pause" className="text-xs font-semibold text-[var(--nv-muted)]">
-                Jeda Natural di Koma (, ; :)
+              <label htmlFor="tts-para-pause" className="text-xs font-semibold text-[var(--nv-muted)]">
+                Jeda Antar Paragraf
               </label>
               <span className="text-xs font-semibold tabular-nums">
-                {settings.commaPauseMs} ms
+                {settings.paragraphPauseMs} ms
               </span>
             </div>
             <input
-              id="tts-comma-pause"
+              id="tts-para-pause"
               type="range"
               min={0}
-              max={500}
-              step={10}
-              value={settings.commaPauseMs}
-              onChange={(e) => onUpdate({ commaPauseMs: Number(e.target.value) })}
+              max={800}
+              step={50}
+              value={settings.paragraphPauseMs}
+              onChange={(e) => onUpdate({ paragraphPauseMs: Number(e.target.value) })}
               className="h-2 w-full accent-[var(--nv-accent)]"
             />
-            <p className="mt-1 text-xs text-[var(--nv-muted)]">
-              Rekomendasi natural: 150–250 ms agar jeda koma terasa halus tanpa terputus lama.
-            </p>
+          </div>
+
+          {/* Jeda Tambahan SSML (Koma & Akhir Kalimat) */}
+          <div className="rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-3.5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold">Jeda Tambahan (SSML)</p>
+              {ssmlDisabled && (
+                <span className="text-[11px] font-medium text-[var(--nv-muted)]">
+                  Tidak didukung mesin TTS ini
+                </span>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <label htmlFor="tts-comma-pause" className="text-xs text-[var(--nv-muted)]">
+                  Jeda Tambahan Koma
+                </label>
+                <span className="text-xs font-semibold tabular-nums">
+                  {settings.commaPauseMs === 0 ? '0 ms (Alami)' : `${settings.commaPauseMs} ms`}
+                </span>
+              </div>
+              <input
+                id="tts-comma-pause"
+                type="range"
+                min={0}
+                max={300}
+                step={25}
+                disabled={ssmlDisabled}
+                value={settings.commaPauseMs}
+                onChange={(e) => onUpdate({ commaPauseMs: Number(e.target.value) })}
+                className="h-2 w-full accent-[var(--nv-accent)] disabled:opacity-40"
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <label htmlFor="tts-sentence-pause" className="text-xs text-[var(--nv-muted)]">
+                  Jeda Tambahan Akhir Kalimat
+                </label>
+                <span className="text-xs font-semibold tabular-nums">
+                  {settings.sentencePauseMs === 0 ? '0 ms (Alami)' : `${settings.sentencePauseMs} ms`}
+                </span>
+              </div>
+              <input
+                id="tts-sentence-pause"
+                type="range"
+                min={0}
+                max={600}
+                step={50}
+                disabled={ssmlDisabled}
+                value={settings.sentencePauseMs}
+                onChange={(e) => onUpdate({ sentencePauseMs: Number(e.target.value) })}
+                className="h-2 w-full accent-[var(--nv-accent)] disabled:opacity-40"
+              />
+            </div>
           </div>
 
           {/* Sleep Timer */}
