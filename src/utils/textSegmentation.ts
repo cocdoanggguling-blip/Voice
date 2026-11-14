@@ -1,11 +1,19 @@
 import type {
+  InlineFormatSpan,
   ParsedParagraph,
+  PronunciationRule,
   SentenceSegment,
   SpeechChunk,
   SpeechChunkSlice,
+  TextReplaceRule,
   TtsReadingMode,
   WordToken,
 } from '../types/reader';
+import {
+  buildTtsSpokenTransform,
+  mapSpokenOffsetToOriginal,
+  type BookReplaceContext,
+} from './textReplace';
 
 const ABBREVIATIONS = new Set([
   'tn.',
@@ -188,12 +196,20 @@ export function tokenizeWords(
   return tokens;
 }
 
+export interface ParagraphInputEntry {
+  tag: ParsedParagraph['tag'];
+  text: string;
+  isFootnote?: boolean;
+  isHeaderLike?: boolean;
+  inlineFormats?: InlineFormatSpan[];
+}
+
 /**
  * Segments chapter paragraphs into a unified chapter-character coordinate system.
  * Paragraphs are separated by "\n\n" (2 chars) in chapter offset space.
  */
 export function segmentParagraphs(
-  entries: Array<{ tag: ParsedParagraph['tag']; text: string }>,
+  entries: ParagraphInputEntry[],
   locale = 'id'
 ): {
   paragraphs: ParsedParagraph[];
@@ -213,6 +229,8 @@ export function segmentParagraphs(
     const pIndex = paragraphs.length;
     const pStart = cursor;
     const pEnd = pStart + cleanText.length;
+    const paraLang: 'id' | 'en' =
+      detectLikelySourceLanguage(cleanText, locale) === 'id' ? 'id' : 'en';
 
     const spans = splitIntoSentencesWithOffsets(cleanText, locale);
     const sentenceSegments: SentenceSegment[] = spans.map((span) => {
@@ -229,6 +247,8 @@ export function segmentParagraphs(
         chapterStartChar: chapStart,
         chapterEndChar: chapEnd,
         words,
+        isFootnote: entry.isFootnote,
+        detectedLang: paraLang,
       };
       allSentences.push(seg);
       return seg;
@@ -242,6 +262,9 @@ export function segmentParagraphs(
       chapterStartChar: pStart,
       chapterEndChar: pEnd,
       sentences: sentenceSegments,
+      isFootnote: entry.isFootnote,
+      isHeaderLike: entry.isHeaderLike,
+      inlineFormats: entry.inlineFormats,
     });
 
     cursor = pEnd + 2; // "\n\n" separator
@@ -253,6 +276,22 @@ export function segmentParagraphs(
     allWords,
     totalChars: Math.max(0, cursor - 2),
   };
+}
+
+export interface SpeechFilterOptions {
+  skipParentheses?: boolean;
+  skipSymbolsAndQuotes?: boolean;
+  pronunciationDict?: PronunciationRule[];
+  ttsOnlyRules?: TextReplaceRule[];
+  chapterIndex?: number;
+  bookCtx?: BookReplaceContext;
+}
+
+export function preprocessSpeechText(
+  rawText: string,
+  options: SpeechFilterOptions
+): string {
+  return buildTtsSpokenTransform(rawText, options).spokenText;
 }
 
 /**
@@ -275,7 +314,7 @@ export function buildOptionalSsml(
     .replace(/>/g, '&gt;');
 
   if (commaPauseMs > 0) {
-    const clampedComma = Math.min(300, Math.max(0, Math.round(commaPauseMs)));
+    const clampedComma = Math.min(500, Math.max(0, Math.round(commaPauseMs)));
     escaped = escaped.replace(/([,;:])(\s+)/g, `$1<break time="${clampedComma}ms"/>$2`);
   }
 
@@ -298,6 +337,34 @@ export interface BuildSpeechQueueOptions {
   commaPauseMs: number;
   sentencePauseMs: number;
   ssmlSupported: boolean;
+  readFootnotes?: boolean;
+  skipHeadersAndFootnotes?: boolean;
+  readChapterTitle?: boolean;
+  skipParentheses?: boolean;
+  skipSymbolsAndQuotes?: boolean;
+  pronunciationDict?: PronunciationRule[];
+  ttsOnlyRules?: TextReplaceRule[];
+  chapterIndex?: number;
+  bookCtx?: BookReplaceContext;
+}
+
+function splitCommaSegments(text: string): Array<{ text: string; start: number; end: number }> {
+  const results: Array<{ text: string; start: number; end: number }> = [];
+  const regex = /[^,;:]+(?:[,;:]+|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const raw = match[0];
+    const lead = raw.length - raw.trimStart().length;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const start = match.index + lead;
+    results.push({
+      text: trimmed,
+      start,
+      end: start + trimmed.length,
+    });
+  }
+  return results.length > 0 ? results : [{ text, start: 0, end: text.length }];
 }
 
 /**
@@ -305,7 +372,9 @@ export interface BuildSpeechQueueOptions {
  * - "flowing": sends whole paragraphs (or merges short dialogue paragraphs up to ~300-600 chars)
  *   as single speech units; splits long paragraphs ONLY at sentence boundaries before
  *   min(chunkSizeChars, maxEngineInputLength). Adds paragraphPauseMs only between paragraphs.
- * - "sentence": legacy per-sentence fallback mode.
+ *   When commaPauseMs > 0 and SSML is unavailable, splits at comma clauses while keeping
+ *   exact chapter charOffset mapping intact.
+ * - "sentence": per-sentence fallback mode.
  */
 export function buildSpeechChunksFromOffset(
   paragraphs: ParsedParagraph[],
@@ -314,6 +383,21 @@ export function buildSpeechChunksFromOffset(
 ): SpeechChunk[] {
   if (paragraphs.length === 0) return [];
 
+  const filteredParagraphs = paragraphs.filter((para, idx) => {
+    if (options.readChapterTitle === false && idx === 0 && para.tag === 'h1') {
+      return false;
+    }
+    if (options.skipHeadersAndFootnotes && (para.isHeaderLike || para.isFootnote)) {
+      return false;
+    }
+    if (options.readFootnotes === false && para.isFootnote) {
+      return false;
+    }
+    return true;
+  });
+
+  if (filteredParagraphs.length === 0) return [];
+
   const userChunkSize = Math.max(300, Math.min(3000, options.chunkSizeChars));
   const engineLimit = options.maxEngineInputLength > 0 ? options.maxEngineInputLength : 3500;
   const hardMax = Math.min(userChunkSize, engineLimit);
@@ -321,8 +405,18 @@ export function buildSpeechChunksFromOffset(
   const isShortPiece = (len: number) => len < 180;
   const chunks: SpeechChunk[] = [];
 
+  const speechFilterOpts: SpeechFilterOptions = {
+    skipParentheses: options.skipParentheses,
+    skipSymbolsAndQuotes: options.skipSymbolsAndQuotes,
+    pronunciationDict: options.pronunciationDict,
+    ttsOnlyRules: options.ttsOnlyRules,
+    chapterIndex: options.chapterIndex,
+    bookCtx: options.bookCtx,
+  };
+
   if (options.readingMode === 'sentence') {
-    for (const para of paragraphs) {
+    const useCommaSplit = !options.ssmlSupported && options.commaPauseMs > 0;
+    for (const para of filteredParagraphs) {
       for (let sIdx = 0; sIdx < para.sentences.length; sIdx++) {
         const sent = para.sentences[sIdx];
         if (sent.chapterEndChar <= startChapterOffset) continue;
@@ -335,32 +429,56 @@ export function buildSpeechChunksFromOffset(
         if (!text) continue;
 
         const isLastInPara = sIdx === para.sentences.length - 1;
-        const { speakText, isSsml } = buildOptionalSsml(
-          text,
-          options.commaPauseMs,
-          options.sentencePauseMs,
-          options.ssmlSupported
-        );
+        const subSegments = useCommaSplit
+          ? splitCommaSegments(text)
+          : [{ text, start: 0, end: text.length }];
 
-        chunks.push({
-          chunkIndex: chunks.length,
-          text,
-          speakText,
-          isSsml,
-          chapterStartChar: actualStart,
-          chapterEndChar: sent.chapterEndChar,
-          pauseAfterMs: isLastInPara ? options.paragraphPauseMs : 120,
-          slices: [
-            {
-              paragraphIndex: para.index,
-              chapterStartChar: actualStart,
-              chapterEndChar: sent.chapterEndChar,
-              localStartChar: 0,
-              localEndChar: text.length,
-            },
-          ],
+        subSegments.forEach((seg, segIdx) => {
+          const isLastSub = segIdx === subSegments.length - 1;
+          const { spokenText: processed, offsetMap } = buildTtsSpokenTransform(
+            seg.text,
+            speechFilterOpts
+          );
+          if (!processed) return;
+          const { speakText, isSsml } = buildOptionalSsml(
+            processed,
+            options.commaPauseMs,
+            options.sentencePauseMs,
+            options.ssmlSupported
+          );
+          const segStartChar = actualStart + seg.start;
+          const segEndChar = actualStart + seg.end;
+          const pauseMs = isLastSub
+            ? isLastInPara
+              ? options.paragraphPauseMs
+              : Math.max(120, options.sentencePauseMs || 0)
+            : options.commaPauseMs;
+
+          chunks.push({
+            chunkIndex: chunks.length,
+            text: seg.text,
+            speakText,
+            isSsml,
+            chapterStartChar: segStartChar,
+            chapterEndChar: segEndChar,
+            pauseAfterMs: pauseMs,
+            detectedLang: sent.detectedLang,
+            slices: [
+              {
+                paragraphIndex: para.index,
+                chapterStartChar: segStartChar,
+                chapterEndChar: segEndChar,
+                localStartChar: 0,
+                localEndChar: seg.text.length,
+              },
+            ],
+            spokenOffsetMap: offsetMap,
+          });
         });
       }
+    }
+    if (chunks.length > 0) {
+      chunks[chunks.length - 1].pauseAfterMs = 0;
     }
     return chunks;
   }
@@ -372,11 +490,12 @@ export function buildSpeechChunksFromOffset(
     chapterStartChar: number;
     chapterEndChar: number;
     endsParagraph: boolean;
+    detectedLang?: 'id' | 'en';
   }
 
   const atomicPieces: ParaSegment[] = [];
 
-  for (const para of paragraphs) {
+  for (const para of filteredParagraphs) {
     if (para.chapterEndChar <= startChapterOffset) continue;
 
     // Extract remaining portion of paragraph if resuming mid-paragraph
@@ -411,6 +530,7 @@ export function buildSpeechChunksFromOffset(
         chapterStartChar: actualStart,
         chapterEndChar: last.chapterEndChar,
         endsParagraph: isParaEnd,
+        detectedLang: first.detectedLang,
       });
       groupSentences = [];
       groupLen = 0;
@@ -454,6 +574,7 @@ export function buildSpeechChunksFromOffset(
               chapterStartChar: pStart,
               chapterEndChar: pStart + piece.length,
               endsParagraph: isLast && cut >= sliceText.length,
+              detectedLang: sent.detectedLang,
             });
           }
           subCursor = cut;
@@ -498,23 +619,31 @@ export function buildSpeechChunksFromOffset(
     }
 
     const lastPiece = bufferPieces[bufferPieces.length - 1];
-    const { speakText, isSsml } = buildOptionalSsml(
+    const { spokenText: processed, offsetMap } = buildTtsSpokenTransform(
       combined,
-      options.commaPauseMs,
-      options.sentencePauseMs,
-      options.ssmlSupported
+      speechFilterOpts
     );
+    if (processed) {
+      const { speakText, isSsml } = buildOptionalSsml(
+        processed,
+        options.commaPauseMs,
+        options.sentencePauseMs,
+        options.ssmlSupported
+      );
 
-    chunks.push({
-      chunkIndex: chunks.length,
-      text: combined,
-      speakText,
-      isSsml,
-      chapterStartChar: bufferPieces[0].chapterStartChar,
-      chapterEndChar: lastPiece.chapterEndChar,
-      pauseAfterMs: lastPiece.endsParagraph ? options.paragraphPauseMs : 0,
-      slices,
-    });
+      chunks.push({
+        chunkIndex: chunks.length,
+        text: combined,
+        speakText,
+        isSsml,
+        chapterStartChar: bufferPieces[0].chapterStartChar,
+        chapterEndChar: lastPiece.chapterEndChar,
+        pauseAfterMs: lastPiece.endsParagraph ? options.paragraphPauseMs : 0,
+        detectedLang: bufferPieces[0].detectedLang,
+        slices,
+        spokenOffsetMap: offsetMap,
+      });
+    }
 
     bufferPieces = [];
     bufferLen = 0;
@@ -531,9 +660,12 @@ export function buildSpeechChunksFromOffset(
     }
 
     // Merge consecutive short paragraphs (e.g. short 1-line dialog) up to shortMergeTarget
+    // without crossing detected language boundaries
+    const prevLang = bufferPieces[bufferPieces.length - 1]?.detectedLang;
     if (
       piece.endsParagraph &&
       isShortPiece(piece.text.length) &&
+      (!prevLang || !piece.detectedLang || prevLang === piece.detectedLang) &&
       bufferLen + 1 + piece.text.length <= shortMergeTarget
     ) {
       bufferPieces.push(piece);
@@ -565,9 +697,12 @@ export function buildSpeechChunksFromOffset(
  */
 export function mapChunkLocalOffsetToChapterOffset(
   chunk: SpeechChunk,
-  localCharOffset: number
+  spokenLocalCharOffset: number
 ): number {
-  const clampedLocal = Math.max(0, Math.min(localCharOffset, chunk.text.length));
+  const rawLocalOffset = chunk.spokenOffsetMap
+    ? mapSpokenOffsetToOriginal(spokenLocalCharOffset, chunk.spokenOffsetMap)
+    : spokenLocalCharOffset;
+  const clampedLocal = Math.max(0, Math.min(rawLocalOffset, chunk.text.length));
   for (const slice of chunk.slices) {
     if (clampedLocal >= slice.localStartChar && clampedLocal <= slice.localEndChar) {
       const delta = clampedLocal - slice.localStartChar;

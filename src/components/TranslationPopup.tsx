@@ -1,5 +1,5 @@
 import React from 'react';
-import { Languages, Play, WifiOff, X } from 'lucide-react';
+import { Languages, Play, Volume2, WifiOff, X } from 'lucide-react';
 import { TARGET_LANGUAGES } from '../services/translationService';
 import type { TargetLanguageCode, TranslationResult } from '../types/reader';
 
@@ -11,6 +11,7 @@ interface TranslationPopupProps {
   result: TranslationResult | null;
   onChangeTargetLang: (lang: TargetLanguageCode) => void;
   onReadFromHere?: (sentenceIndex: number) => void;
+  onSpeakTranslation?: (translatedText: string, lang: TargetLanguageCode) => void;
   onClose: () => void;
 }
 
@@ -22,6 +23,7 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
   result,
   onChangeTargetLang,
   onReadFromHere,
+  onSpeakTranslation,
   onClose,
 }) => {
   if (!sourceText) return null;
@@ -30,12 +32,15 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
     <div
       role="dialog"
       aria-label="Popup Terjemahan"
-      className="fixed bottom-24 left-1/2 z-40 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-4 text-[var(--nv-text)] shadow-2xl"
+      className="fixed bottom-28 left-1/2 z-40 w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-4 text-[var(--nv-text)] shadow-2xl"
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs font-semibold text-[var(--nv-muted)]">
           <Languages className="h-4 w-4 text-[var(--nv-accent)]" aria-hidden="true" />
-          <span>Terjemahan Langsung</span>
+          <span>Terjemahan</span>
+          {result?.provider && (
+            <span>· {result.provider === 'libretranslate' ? 'LibreTranslate' : 'MyMemory'}</span>
+          )}
           {result?.fromCache && <span>· Cache</span>}
         </div>
 
@@ -83,21 +88,32 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
         )}
       </div>
 
-      {sentenceIndex !== null && onReadFromHere && (
-        <div className="mt-3 flex justify-end border-t border-[var(--nv-border)] pt-2.5">
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--nv-border)] pt-2.5">
+        {result?.ok && result.translatedText && onSpeakTranslation && (
+          <button
+            type="button"
+            onClick={() => onSpeakTranslation(result.translatedText, targetLang)}
+            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-3 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <Volume2 className="h-3.5 w-3.5 text-[var(--nv-accent)]" aria-hidden="true" />
+            <span>Bacakan Terjemahan</span>
+          </button>
+        )}
+
+        {sentenceIndex !== null && onReadFromHere && (
           <button
             type="button"
             onClick={() => {
               onReadFromHere(sentenceIndex);
               onClose();
             }}
-            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[var(--nv-accent)] px-3.5 text-xs font-semibold text-white hover:opacity-90"
+            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-[var(--nv-accent)] px-3.5 text-xs font-semibold text-white hover:opacity-90"
           >
             <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
-            <span>Baca TTS dari kalimat ini</span>
+            <span>Baca dari kalimat ini</span>
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

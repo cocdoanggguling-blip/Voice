@@ -8,6 +8,7 @@ import {
   findLocationAtChapterOffset,
   findSentenceStartForOffset,
   mapChunkLocalOffsetToChapterOffset,
+  preprocessSpeechText,
   segmentParagraphs,
   splitIntoSentences,
 } from './textSegmentation';
@@ -195,3 +196,42 @@ test('detectLikelySourceLanguage detects Indonesian vs English', () => {
     'en'
   );
 });
+
+test('preprocessSpeechText applies pronunciation dict, skips parentheses, and strips symbols', () => {
+  const raw = '“Kapal S.H. itu (lihat catatan 1) berlayar* cepat!”';
+  const out = preprocessSpeechText(raw, {
+    skipParentheses: true,
+    skipSymbolsAndQuotes: true,
+    pronunciationDict: [{ id: '1', pattern: 'S.H.', replacement: 'Sarjana Hukum' }],
+  });
+  assert.equal(out, 'Kapal Sarjana Hukum itu berlayar cepat!');
+});
+
+test('commaPauseMs splits comma clauses in sentence mode when SSML is unsupported while preserving chapter offsets', () => {
+  const { paragraphs, allSentences } = segmentParagraphs([
+    { tag: 'h1', text: 'Bab 1: Dermaga' },
+    { tag: 'p', text: 'Angin pagi bertiup, ombak tenang; perahu pun melaju.' },
+    { tag: 'p', text: '[1] Catatan kaki pelabuhan.', isFootnote: true },
+  ]);
+
+  const chunks = buildSpeechChunksFromOffset(paragraphs, 0, {
+    readingMode: 'sentence',
+    chunkSizeChars: 800,
+    maxEngineInputLength: 3500,
+    paragraphPauseMs: 300,
+    commaPauseMs: 200,
+    sentencePauseMs: 0,
+    ssmlSupported: false,
+    readChapterTitle: false,
+    readFootnotes: false,
+  });
+
+  // Chapter title (h1) and footnote are skipped; single sentence splits into 3 comma segments
+  assert.equal(chunks.length, 3);
+  assert.equal(chunks[0].pauseAfterMs, 200);
+  assert.equal(chunks[1].pauseAfterMs, 200);
+  assert.equal(chunks[2].pauseAfterMs, 0);
+  const loc = findLocationAtChapterOffset(allSentences, chunks[2].chapterStartChar);
+  assert.equal(loc.sentenceIndex, 1);
+});
+

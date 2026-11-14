@@ -1,4 +1,8 @@
-import type { TargetLanguageCode, TranslationResult } from '../types/reader';
+import type {
+  TargetLanguageCode,
+  TranslationProvider,
+  TranslationResult,
+} from '../types/reader';
 import { detectLikelySourceLanguage } from '../utils/textSegmentation';
 import { getCachedTranslation, setCachedTranslation } from './storageService';
 
@@ -12,19 +16,102 @@ export const TARGET_LANGUAGES: Array<{ code: TargetLanguageCode; label: string }
   { code: 'zh-CN', label: 'Mandarin' },
 ];
 
-function buildCacheKey(sourceLang: string, targetLang: string, text: string): string {
-  return `${sourceLang}|${targetLang}|${text.trim().toLowerCase()}`;
+export interface TranslateOptions {
+  provider?: TranslationProvider;
+  libreTranslateUrl?: string;
+}
+
+function buildCacheKey(
+  provider: TranslationProvider,
+  sourceLang: string,
+  targetLang: string,
+  text: string
+): string {
+  return `${provider}|${sourceLang}|${targetLang}|${text.trim().toLowerCase()}`;
+}
+
+async function translateViaMyMemory(
+  chunk: string,
+  effectiveSource: string,
+  targetLang: string,
+  signal: AbortSignal
+): Promise<string> {
+  const url = new URL('https://api.mymemory.translated.net/get');
+  url.searchParams.set('q', chunk);
+  url.searchParams.set('langpair', `${effectiveSource}|${targetLang}`);
+
+  const res = await fetch(url.toString(), {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const data = (await res.json()) as {
+    responseStatus?: number;
+    responseData?: { translatedText?: string };
+    responseDetails?: string;
+  };
+
+  const translated = data.responseData?.translatedText?.trim();
+  if (!translated || data.responseStatus === 403) {
+    throw new Error(data.responseDetails || 'Terjemahan MyMemory tidak tersedia saat ini.');
+  }
+  return translated;
+}
+
+async function translateViaLibreTranslate(
+  chunk: string,
+  effectiveSource: string,
+  targetLang: string,
+  endpointUrl: string,
+  signal: AbortSignal
+): Promise<string> {
+  const normalizedTarget = targetLang.toLowerCase().startsWith('zh') ? 'zh' : targetLang;
+  const res = await fetch(endpointUrl || 'https://libretranslate.com/translate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      q: chunk,
+      source: 'auto',
+      target: normalizedTarget,
+      format: 'text',
+      alternatives: 0,
+      api_key: '',
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(`LibreTranslate HTTP ${res.status}`);
+  }
+
+  const data = (await res.json()) as { translatedText?: string; error?: string };
+  const translated = data.translatedText?.trim();
+  if (!translated) {
+    throw new Error(data.error || 'Respons LibreTranslate kosong.');
+  }
+  return translated;
 }
 
 /**
- * Translates selected word, sentence, or paragraph using keyless MyMemory API
- * with persistent IndexedDB caching and strict online/offline handling.
+ * Translates selected word, sentence, or paragraph using switchable keyless
+ * providers (MyMemory or LibreTranslate) with persistent IndexedDB caching
+ * and strict online/offline handling.
  */
 export async function translateText(
   rawText: string,
   targetLang: TargetLanguageCode,
-  bookLangHint?: string
+  bookLangHint?: string,
+  options: TranslateOptions = {}
 ): Promise<TranslationResult> {
+  const provider: TranslationProvider = options.provider ?? 'mymemory';
   const text = rawText.replace(/\s+/g, ' ').trim();
   if (!text) {
     return {
@@ -33,6 +120,7 @@ export async function translateText(
       sourceLang: 'en',
       targetLang,
       fromCache: false,
+      provider,
       error: 'Teks kosong.',
     };
   }
@@ -41,7 +129,7 @@ export async function translateText(
   const effectiveSource =
     sourceLang === targetLang ? (targetLang === 'id' ? 'en' : 'id') : sourceLang;
 
-  const cacheKey = buildCacheKey(effectiveSource, targetLang, text);
+  const cacheKey = buildCacheKey(provider, effectiveSource, targetLang, text);
   const cached = await getCachedTranslation(cacheKey);
   if (cached) {
     return {
@@ -50,6 +138,7 @@ export async function translateText(
       sourceLang: effectiveSource,
       targetLang,
       fromCache: true,
+      provider,
     };
   }
 
@@ -61,48 +150,33 @@ export async function translateText(
       sourceLang: effectiveSource,
       targetLang,
       fromCache: false,
+      provider,
       error: 'Sedang offline — terjemahan membutuhkan koneksi internet.',
     };
   }
 
-  // MyMemory supports up to 500 chars per query cleanly; split long paragraphs if needed
   try {
-    const chunks = splitForApiLimit(text, 450);
+    const chunks = splitForApiLimit(text, provider === 'mymemory' ? 450 : 1400);
     const translatedParts: string[] = [];
 
     for (const chunk of chunks) {
-      const url = new URL('https://api.mymemory.translated.net/get');
-      url.searchParams.set('q', chunk);
-      url.searchParams.set('langpair', `${effectiveSource}|${targetLang}`);
-
       const abortController = new AbortController();
-      const timer = window.setTimeout(() => abortController.abort(), 6000);
-      let res: Response;
+      const timer = window.setTimeout(() => abortController.abort(), 7000);
       try {
-        res = await fetch(url.toString(), {
-          method: 'GET',
-          headers: { Accept: 'application/json' },
-          signal: abortController.signal,
-        });
+        const part =
+          provider === 'libretranslate'
+            ? await translateViaLibreTranslate(
+                chunk,
+                effectiveSource,
+                targetLang,
+                options.libreTranslateUrl || 'https://libretranslate.com/translate',
+                abortController.signal
+              )
+            : await translateViaMyMemory(chunk, effectiveSource, targetLang, abortController.signal);
+        translatedParts.push(part);
       } finally {
         window.clearTimeout(timer);
       }
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      const data = (await res.json()) as {
-        responseStatus?: number;
-        responseData?: { translatedText?: string };
-        responseDetails?: string;
-      };
-
-      const translated = data.responseData?.translatedText?.trim();
-      if (!translated || data.responseStatus === 403) {
-        throw new Error(data.responseDetails || 'Terjemahan tidak tersedia saat ini.');
-      }
-      translatedParts.push(translated);
     }
 
     const combined = translatedParts.join(' ');
@@ -114,6 +188,7 @@ export async function translateText(
       sourceLang: effectiveSource,
       targetLang,
       fromCache: false,
+      provider,
     };
   } catch (err) {
     const isOfflineNow = typeof navigator !== 'undefined' && !navigator.onLine;
@@ -124,6 +199,7 @@ export async function translateText(
       sourceLang: effectiveSource,
       targetLang,
       fromCache: false,
+      provider,
       error: isOfflineNow
         ? 'Sedang offline — terjemahan membutuhkan koneksi internet.'
         : err instanceof Error

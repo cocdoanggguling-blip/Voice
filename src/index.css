@@ -7,7 +7,7 @@
     --nv-surface: #ffffff;
     --nv-text: #1c1917;
     --nv-muted: #68635e;
-    --nv-border: rgba(28, 25, 23, 0.09);
+    --nv-border: rgba(28, 25, 23, 0.1);
     --nv-accent: #b45309;
     --nv-accent-soft: rgba(180, 83, 9, 0.12);
     --nv-word-highlight: rgba(217, 119, 6, 0.28);
@@ -24,8 +24,8 @@
     --nv-word-highlight: rgba(194, 65, 12, 0.24);
   }
 
-  .theme-dark,
-  .dark {
+  :root.theme-dark,
+  :root.dark {
     --nv-bg: #121417;
     --nv-surface: #1a1d22;
     --nv-text: #e6e3dd;
@@ -33,6 +33,28 @@
     --nv-border: rgba(230, 227, 221, 0.1);
     --nv-accent: #f59e0b;
     --nv-accent-soft: rgba(245, 158, 11, 0.14);
+    --nv-word-highlight: rgba(245, 158, 11, 0.34);
+  }
+
+  :root.theme-twilight {
+    --nv-bg: #2b2b2b;
+    --nv-surface: #353538;
+    --nv-text: #bac7d6;
+    --nv-muted: #8b9bb0;
+    --nv-border: rgba(186, 199, 214, 0.14);
+    --nv-accent: #eab308;
+    --nv-accent-soft: rgba(234, 179, 8, 0.15);
+    --nv-word-highlight: rgba(234, 179, 8, 0.3);
+  }
+
+  :root.theme-amoled {
+    --nv-bg: #000000;
+    --nv-surface: #0b0c0e;
+    --nv-text: #e5e5e5;
+    --nv-muted: #8b8d94;
+    --nv-border: rgba(255, 255, 255, 0.12);
+    --nv-accent: #f59e0b;
+    --nv-accent-soft: rgba(245, 158, 11, 0.16);
     --nv-word-highlight: rgba(245, 158, 11, 0.34);
   }
 
@@ -44,14 +66,36 @@
   }
 }
 
+.font-reader-book {
+  font-family: 'Literata', Georgia, 'Times New Roman', serif;
+}
+.font-reader-alice {
+  font-family: 'Alice', Georgia, serif;
+}
 .font-reader-literata {
   font-family: 'Literata', Georgia, 'Times New Roman', serif;
 }
-
+.font-reader-merriweather {
+  font-family: 'Merriweather', Georgia, serif;
+}
+.font-reader-lora {
+  font-family: 'Lora', Georgia, serif;
+}
+.font-reader-roboto {
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.font-reader-noto-serif {
+  font-family: 'Noto Serif', Georgia, serif;
+}
+.font-reader-open-sans {
+  font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.font-reader-atkinson {
+  font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, sans-serif;
+}
 .font-reader-jakarta {
   font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
 }
-
 .font-reader-mono {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 }
@@ -72,6 +116,55 @@
   text-underline-offset: 3px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+}
+
+.nv-hyphen-auto {
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  overflow-wrap: break-word;
+}
+
+@keyframes nvPageSlideH {
+  from {
+    opacity: 0.35;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes nvPageSlideV {
+  from {
+    opacity: 0.35;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes nvPageFade {
+  from {
+    opacity: 0.15;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.anim-page-horizontal {
+  animation: nvPageSlideH 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.anim-page-vertical {
+  animation: nvPageSlideV 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.anim-page-fade {
+  animation: nvPageFade 200ms ease-out;
 }
 
 .pb-safe {

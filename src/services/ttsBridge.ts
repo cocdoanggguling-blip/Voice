@@ -1,12 +1,15 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type {
+  OrientationLockMode,
   ParsedParagraph,
   SentenceSegment,
   SpeechChunk,
+  TextReplaceRule,
   TtsEngineCapabilities,
   TtsSettings,
   TtsVoiceInfo,
 } from '../types/reader';
+import type { BookReplaceContext } from '../utils/textReplace';
 import {
   buildSpeechChunksFromOffset,
   estimateChunkDurationMs,
@@ -14,15 +17,21 @@ import {
   findSentenceStartForOffset,
   mapChunkLocalOffsetToChapterOffset,
 } from '../utils/textSegmentation';
+import { isAllowedTtsVoice, isEnglishVoice, isIndonesianVoice } from '../utils/ttsVoices';
 
 export interface NovelVoiceTtsPluginInterface {
   getEngineInfo(): Promise<TtsEngineCapabilities>;
   getVoices(): Promise<{ voices: TtsVoiceInfo[] }>;
   configureSession(options: { voiceURI?: string; rate: number; pitch: number }): Promise<void>;
-  speak(options: { text: string; utteranceId: string; queueMode: 0 | 1 }): Promise<void>;
+  speak(options: { text: string; utteranceId: string; queueMode: 0 | 1; volume?: number }): Promise<void>;
   playSilent(options: { durationMs: number; utteranceId: string }): Promise<void>;
   stop(): Promise<void>;
   openTtsSettings(): Promise<{ opened: boolean }>;
+  openBatteryOptimizationSettings(): Promise<{ opened: boolean }>;
+  setScreenBrightness(options: { brightness: number }): Promise<void>;
+  setKeepScreenOn(options: { enabled: boolean }): Promise<void>;
+  setOrientationLock(options: { mode: OrientationLockMode }): Promise<void>;
+  consumePendingOpenEpub(): Promise<{ fileName?: string; base64?: string; filePath?: string } | null>;
   checkNotificationPermission(): Promise<{ granted: boolean; sdkInt: number }>;
   requestNotificationPermission(): Promise<{ granted: boolean }>;
   startForegroundService(options: {
@@ -84,7 +93,9 @@ export async function getSystemVoices(): Promise<TtsVoiceInfo[]> {
   if (Capacitor.isNativePlatform()) {
     try {
       const res = await NovelVoiceTts.getVoices();
-      if (res?.voices?.length) return res.voices;
+      if (res?.voices?.length) {
+        return res.voices.filter((v) => isAllowedTtsVoice(v));
+      }
     } catch {
       // Ignore
     }
@@ -96,12 +107,15 @@ export async function getSystemVoices(): Promise<TtsVoiceInfo[]> {
   }
 
   const readVoices = () =>
-    window.speechSynthesis.getVoices().map((v) => ({
-      voiceURI: v.voiceURI,
-      name: v.name,
-      lang: v.lang,
-      localService: v.localService,
-    }));
+    window.speechSynthesis
+      .getVoices()
+      .map((v) => ({
+        voiceURI: v.voiceURI,
+        name: v.name,
+        lang: v.lang,
+        localService: v.localService,
+      }))
+      .filter((v) => isAllowedTtsVoice(v));
 
   const immediate = readVoices();
   if (immediate.length > 0) return immediate;
@@ -140,6 +154,82 @@ export async function openNativeTtsSettings(): Promise<{ opened: boolean; messag
   };
 }
 
+export async function openBatteryOptimizationSettings(): Promise<{ opened: boolean; message?: string }> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await NovelVoiceTts.openBatteryOptimizationSettings();
+      return { opened: Boolean(res?.opened) };
+    } catch {
+      return {
+        opened: false,
+        message: 'Buka Setelan Android > Baterai > NovelVoice > Tanpa pembatasan.',
+      };
+    }
+  }
+  return {
+    opened: false,
+    message:
+      'Di Android (APK), tombol ini mengarahkan ke pengaturan pengecualian optimasi baterai agar pembacaan TTS latar belakang tidak dihentikan sistem.',
+  };
+}
+
+export async function syncNativeScreenSettings(options: {
+  brightness: number;
+  keepScreenOn: boolean;
+  orientationLock: OrientationLockMode;
+}): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    await Promise.all([
+      NovelVoiceTts.setScreenBrightness({ brightness: options.brightness }).catch(() => undefined),
+      NovelVoiceTts.setKeepScreenOn({ enabled: options.keepScreenOn }).catch(() => undefined),
+      NovelVoiceTts.setOrientationLock({ mode: options.orientationLock }).catch(() => undefined),
+    ]);
+    return;
+  }
+
+  // Web Screen Orientation Lock & WakeLock best-effort
+  if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && options.keepScreenOn) {
+    try {
+      await (navigator as unknown as { wakeLock: { request: (t: 'screen') => Promise<unknown> } }).wakeLock.request('screen');
+    } catch {
+      // Ignore permission rejection on web
+    }
+  }
+  if (typeof screen !== 'undefined' && 'orientation' in screen) {
+    try {
+      const orient = screen.orientation as unknown as {
+        lock?: (mode: string) => Promise<void>;
+        unlock?: () => void;
+      };
+      if (options.orientationLock === 'auto') {
+        orient.unlock?.();
+      } else {
+        await orient.lock?.(options.orientationLock);
+      }
+    } catch {
+      // Orientation lock requires fullscreen on desktop browsers
+    }
+  }
+}
+
+export async function consumePendingAndroidOpenEpub(): Promise<File | null> {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const res = await NovelVoiceTts.consumePendingOpenEpub();
+    if (!res?.base64) return null;
+    const bin = atob(res.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i);
+    }
+    return new File([bytes], res.fileName || 'Buku-Impor.epub', {
+      type: 'application/epub+zip',
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function checkAndroidNotificationPermission(): Promise<NotificationPermissionStatus> {
   if (!Capacitor.isNativePlatform()) {
     return { granted: true, sdkInt: 0, isNative: false };
@@ -171,14 +261,10 @@ export interface TtsPlaybackCallbacks {
 
 const LOOKAHEAD_DEPTH = 2;
 
-/**
- * Flowing TTS Controller that decouples Speech Units (large paragraph/merged chunks
- * queued gaplessly via QUEUE_ADD) from Highlight Units (word & sentence derived from
- * chapter character offset via onRangeStart/onboundary + proportional fallback).
- */
 export class TtsPlaybackController {
   private paragraphs: ParsedParagraph[] = [];
   private allSentences: SentenceSegment[] = [];
+  private availableVoices: TtsVoiceInfo[] = [];
   private settings: TtsSettings;
   private capabilities: TtsEngineCapabilities = {
     maxSpeechInputLength: 3500,
@@ -186,6 +272,9 @@ export class TtsPlaybackController {
   };
   private bookTitle = '';
   private chapterTitle = '';
+  private chapterIndex = 0;
+  private bookCtx: BookReplaceContext = { bookId: '' };
+  private ttsOnlyRules: TextReplaceRule[] = [];
   private callbacks: TtsPlaybackCallbacks;
 
   private isPlaying = false;
@@ -201,6 +290,8 @@ export class TtsPlaybackController {
   private utteranceToChunkIdx = new Map<string, number>();
   private sawBoundaryForCurrentChunk = false;
   private webFallbackMode = false;
+  private activeSessionVoiceURI = '';
+  private effectiveVolumeMultiplier = 1.0;
 
   // Timers
   private fallbackProgressTimer: number | null = null;
@@ -224,6 +315,10 @@ export class TtsPlaybackController {
 
   public setCapabilities(caps: TtsEngineCapabilities) {
     this.capabilities = caps;
+  }
+
+  public setAvailableVoices(voices: TtsVoiceInfo[]) {
+    this.availableVoices = voices;
   }
 
   private async setupNativeListeners() {
@@ -274,13 +369,31 @@ export class TtsPlaybackController {
     chapterTitle: string,
     paragraphs: ParsedParagraph[],
     allSentences: SentenceSegment[],
-    initialCharOffset = 0
+    initialCharOffset = 0,
+    chapterIndex = 0,
+    bookCtx?: BookReplaceContext
   ) {
     this.bookTitle = bookTitle;
     this.chapterTitle = chapterTitle;
     this.paragraphs = paragraphs;
     this.allSentences = allSentences;
+    this.chapterIndex = chapterIndex;
+    if (bookCtx) {
+      this.bookCtx = bookCtx;
+    }
     this.syncCursorFromOffset(initialCharOffset);
+  }
+
+  public setTtsReplaceRules(rules: TextReplaceRule[], bookCtx?: BookReplaceContext) {
+    this.ttsOnlyRules = rules.filter((r) => r.ttsOnly && r.enabled);
+    if (bookCtx) this.bookCtx = bookCtx;
+    if (this.isPlaying) {
+      void this.playFromOffset(this.currentCharOffset);
+    }
+  }
+
+  public getQueuedChunks(): SpeechChunk[] {
+    return this.chunks;
   }
 
   public updateSettings(nextSettings: TtsSettings) {
@@ -294,15 +407,22 @@ export class TtsPlaybackController {
     const playbackParamsChanged =
       prev.rate !== nextSettings.rate ||
       prev.pitch !== nextSettings.pitch ||
+      prev.volume !== nextSettings.volume ||
       prev.voiceURI !== nextSettings.voiceURI ||
       prev.readingMode !== nextSettings.readingMode ||
       prev.chunkSizeChars !== nextSettings.chunkSizeChars ||
       prev.paragraphPauseMs !== nextSettings.paragraphPauseMs ||
       prev.commaPauseMs !== nextSettings.commaPauseMs ||
-      prev.sentencePauseMs !== nextSettings.sentencePauseMs;
+      prev.sentencePauseMs !== nextSettings.sentencePauseMs ||
+      prev.multiLangAuto !== nextSettings.multiLangAuto ||
+      prev.readFootnotes !== nextSettings.readFootnotes ||
+      prev.skipHeadersAndFootnotes !== nextSettings.skipHeadersAndFootnotes ||
+      prev.skipParentheses !== nextSettings.skipParentheses ||
+      prev.skipSymbolsAndQuotes !== nextSettings.skipSymbolsAndQuotes ||
+      prev.readChapterTitle !== nextSettings.readChapterTitle ||
+      prev.pronunciationDict !== nextSettings.pronunciationDict;
 
     if (this.isPlaying && playbackParamsChanged) {
-      // Immediately rebuild queue from exact current charOffset without waiting for chunk end
       void this.playFromOffset(this.currentCharOffset);
     }
   }
@@ -310,6 +430,7 @@ export class TtsPlaybackController {
   public configureSleepTimer(minutes: number) {
     this.clearSleepTimer();
     this.stopAtEndOfChapter = false;
+    this.effectiveVolumeMultiplier = 1.0;
 
     if (minutes === -1) {
       this.stopAtEndOfChapter = true;
@@ -330,9 +451,16 @@ export class TtsPlaybackController {
     this.sleepInterval = window.setInterval(() => {
       if (!this.isPlaying || this.sleepRemainingSec === null) return;
       this.sleepRemainingSec -= 1;
-      this.callbacks.onSleepTimerTick(Math.max(0, this.sleepRemainingSec));
-      if (this.sleepRemainingSec <= 0) {
+      const rem = Math.max(0, this.sleepRemainingSec);
+      this.callbacks.onSleepTimerTick(rem);
+
+      if (this.settings.fadeOutBeforeStop && rem > 0 && rem <= 10) {
+        this.effectiveVolumeMultiplier = Math.max(0.15, rem / 10);
+      }
+
+      if (rem <= 0) {
         this.clearSleepTimer();
+        this.effectiveVolumeMultiplier = 1.0;
         this.pause();
       }
     }, 1000);
@@ -350,6 +478,26 @@ export class TtsPlaybackController {
     return this.isPlaying;
   }
 
+  private resolveVoiceForLang(detectedLang?: 'id' | 'en'): string {
+    if (!this.settings.multiLangAuto || !detectedLang) {
+      return this.settings.voiceURI;
+    }
+    const pool = this.availableVoices.filter((v) =>
+      detectedLang === 'id' ? isIndonesianVoice(v) : isEnglishVoice(v)
+    );
+    if (pool.length === 0) return this.settings.voiceURI;
+    // Prefer currently selected voice if it already matches target language
+    const current = pool.find((v) => v.voiceURI === this.settings.voiceURI);
+    if (current) return current.voiceURI;
+    const offlineFirst = pool.find((v) => v.localService) ?? pool[0];
+    return offlineFirst.voiceURI;
+  }
+
+  private getEffectiveVolume(): number {
+    const base = typeof this.settings.volume === 'number' ? this.settings.volume : 1.0;
+    return Math.max(0.05, Math.min(1.0, base * this.effectiveVolumeMultiplier));
+  }
+
   public async playFromSentence(sentenceIndex: number): Promise<void> {
     if (this.allSentences.length === 0) return;
     const clamped = Math.max(0, Math.min(sentenceIndex, this.allSentences.length - 1));
@@ -362,6 +510,7 @@ export class TtsPlaybackController {
 
     this.cancelActiveQueueOnly();
     const token = ++this.sessionToken;
+    this.effectiveVolumeMultiplier = 1.0;
 
     this.syncCursorFromOffset(charOffset);
     this.chunks = buildSpeechChunksFromOffset(this.paragraphs, this.currentCharOffset, {
@@ -372,6 +521,15 @@ export class TtsPlaybackController {
       commaPauseMs: this.settings.commaPauseMs,
       sentencePauseMs: this.settings.sentencePauseMs,
       ssmlSupported: this.capabilities.ssmlSupported,
+      readFootnotes: this.settings.readFootnotes,
+      skipHeadersAndFootnotes: this.settings.skipHeadersAndFootnotes,
+      readChapterTitle: this.settings.readChapterTitle,
+      skipParentheses: this.settings.skipParentheses,
+      skipSymbolsAndQuotes: this.settings.skipSymbolsAndQuotes,
+      pronunciationDict: this.settings.pronunciationDict,
+      ttsOnlyRules: this.ttsOnlyRules,
+      chapterIndex: this.chapterIndex,
+      bookCtx: this.bookCtx,
     });
 
     if (this.chunks.length === 0) {
@@ -387,9 +545,12 @@ export class TtsPlaybackController {
     this.callbacks.onPlaybackStateChange(true);
     this.configureSleepTimer(this.settings.sleepTimerMinutes);
 
+    const initialVoice = this.resolveVoiceForLang(this.chunks[0]?.detectedLang);
+    this.activeSessionVoiceURI = initialVoice;
+
     if (Capacitor.isNativePlatform()) {
       await NovelVoiceTts.configureSession({
-        voiceURI: this.settings.voiceURI,
+        voiceURI: initialVoice,
         rate: this.settings.rate,
         pitch: this.settings.pitch,
       }).catch(() => undefined);
@@ -405,13 +566,11 @@ export class TtsPlaybackController {
 
     if (token !== this.sessionToken || !this.isPlaying) return;
 
-    // Enqueue initial lookahead window (first chunk FLUSH, following chunks QUEUE_ADD)
     await this.fillLookaheadQueue(token, true);
   }
 
   public resume(): void {
     if (this.isPlaying) return;
-    // Snap cleanly to start of the sentence containing last saved charOffset
     const sentenceStart = findSentenceStartForOffset(this.allSentences, this.currentCharOffset);
     void this.playFromOffset(sentenceStart);
   }
@@ -510,6 +669,7 @@ export class TtsPlaybackController {
         text: sampleText,
         utteranceId: `preview_${Date.now()}`,
         queueMode: 0,
+        volume: this.getEffectiveVolume(),
       }).catch(() => undefined);
       return;
     }
@@ -518,6 +678,42 @@ export class TtsPlaybackController {
       window.speechSynthesis.cancel();
       if (token !== this.sessionToken) return;
       const utt = this.createWebUtterance(sampleText, voiceURI);
+      window.speechSynthesis.speak(utt);
+    }
+  }
+
+  public async speakAdhocText(text: string, targetLangCode = 'id'): Promise<void> {
+    const clean = text.trim();
+    if (!clean) return;
+    this.pause();
+    const token = ++this.sessionToken;
+
+    const langPrefix = targetLangCode.toLowerCase().split('-')[0];
+    const matchedVoice =
+      this.availableVoices.find((v) =>
+        langPrefix === 'id' ? isIndonesianVoice(v) : isEnglishVoice(v)
+      )?.voiceURI || this.settings.voiceURI;
+
+    if (Capacitor.isNativePlatform()) {
+      await NovelVoiceTts.configureSession({
+        voiceURI: matchedVoice,
+        rate: this.settings.rate,
+        pitch: this.settings.pitch,
+      }).catch(() => undefined);
+      await NovelVoiceTts.speak({
+        text: clean,
+        utteranceId: `adhoc_${Date.now()}`,
+        queueMode: 0,
+        volume: this.getEffectiveVolume(),
+      }).catch(() => undefined);
+      return;
+    }
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      if (token !== this.sessionToken) return;
+      const utt = this.createWebUtterance(clean, matchedVoice);
+      utt.lang = langPrefix === 'id' ? 'id-ID' : langPrefix === 'en' ? 'en-US' : targetLangCode;
       window.speechSynthesis.speak(utt);
     }
   }
@@ -546,18 +742,39 @@ export class TtsPlaybackController {
       const idx = this.nextEnqueueIdx;
       const chunk = this.chunks[idx];
       const useFlush = flushFirst && idx === 0;
+      const desiredVoice = this.resolveVoiceForLang(chunk.detectedLang);
+
+      // Avoid mixing voices inside a single queued native session if multiLangAuto switches language
+      if (
+        Capacitor.isNativePlatform() &&
+        this.settings.multiLangAuto &&
+        idx > this.activeChunkIdx &&
+        desiredVoice !== this.activeSessionVoiceURI
+      ) {
+        break;
+      }
+
       this.nextEnqueueIdx += 1;
 
       if (Capacitor.isNativePlatform()) {
+        if (desiredVoice !== this.activeSessionVoiceURI) {
+          this.activeSessionVoiceURI = desiredVoice;
+          await NovelVoiceTts.configureSession({
+            voiceURI: desiredVoice,
+            rate: this.settings.rate,
+            pitch: this.settings.pitch,
+          }).catch(() => undefined);
+        }
+
         const uttId = `nv_${token}_${idx}`;
         this.utteranceToChunkIdx.set(uttId, idx);
         await NovelVoiceTts.speak({
           text: chunk.speakText,
           utteranceId: uttId,
           queueMode: useFlush ? 0 : 1,
+          volume: this.getEffectiveVolume(),
         }).catch(() => undefined);
 
-        // Inter-paragraph silence via QUEUE_ADD without flushing or resetting prosody
         if (chunk.pauseAfterMs > 0) {
           await NovelVoiceTts.playSilent({
             durationMs: chunk.pauseAfterMs,
@@ -565,12 +782,18 @@ export class TtsPlaybackController {
           }).catch(() => undefined);
         }
       } else {
-        this.enqueueWebChunk(idx, chunk, token, useFlush);
+        this.enqueueWebChunk(idx, chunk, token, useFlush, desiredVoice);
       }
     }
   }
 
-  private enqueueWebChunk(idx: number, chunk: SpeechChunk, token: number, flushFirst: boolean) {
+  private enqueueWebChunk(
+    idx: number,
+    chunk: SpeechChunk,
+    token: number,
+    flushFirst: boolean,
+    voiceURI: string
+  ) {
     if (
       this.webFallbackMode ||
       typeof window === 'undefined' ||
@@ -586,7 +809,10 @@ export class TtsPlaybackController {
       window.speechSynthesis.cancel();
     }
 
-    const utt = this.createWebUtterance(chunk.text, this.settings.voiceURI);
+    const plainSpoken = chunk.isSsml
+      ? chunk.speakText.replace(/<[^>]+>/g, '')
+      : chunk.speakText;
+    const utt = this.createWebUtterance(plainSpoken, voiceURI);
 
     let started = false;
     let finished = false;
@@ -607,7 +833,7 @@ export class TtsPlaybackController {
       if (initialNoStartTimeout !== null) window.clearTimeout(initialNoStartTimeout);
       if (!this.isPlaying || token !== this.sessionToken) return;
       this.onChunkBecameActive(idx, chunk, token);
-      const est = estimateChunkDurationMs(chunk.text, this.settings.rate);
+      const est = estimateChunkDurationMs(plainSpoken, this.settings.rate);
       safetyTimer = window.setTimeout(completeOnce, Math.max(3000, est + 2500));
     };
 
@@ -628,9 +854,7 @@ export class TtsPlaybackController {
       }
       if (!started) {
         this.webFallbackMode = true;
-        if (initialNoStartTimeout !== null) window.clearTimeout(initialNoStartTimeout);
-        finished = true;
-        if (this.activeChunkIdx === idx) {
+        if (idx === this.activeChunkIdx) {
           this.runHeadlessFallbackChunk(idx, chunk, token);
         }
         return;
@@ -638,44 +862,37 @@ export class TtsPlaybackController {
       completeOnce();
     };
 
-    initialNoStartTimeout = window.setTimeout(() => {
-      if (!started && !finished && this.isPlaying && token === this.sessionToken) {
-        this.webFallbackMode = true;
-        finished = true;
-        if (this.activeChunkIdx === idx) {
+    if (idx === this.activeChunkIdx) {
+      initialNoStartTimeout = window.setTimeout(() => {
+        if (!started && this.isPlaying && token === this.sessionToken) {
+          this.webFallbackMode = true;
           this.runHeadlessFallbackChunk(idx, chunk, token);
         }
-      }
-    }, 350);
-
-    try {
-      window.speechSynthesis.speak(utt);
-    } catch {
-      this.webFallbackMode = true;
-      if (initialNoStartTimeout !== null) window.clearTimeout(initialNoStartTimeout);
-      if (this.activeChunkIdx === idx) {
-        this.runHeadlessFallbackChunk(idx, chunk, token);
-      }
+      }, 900);
     }
+
+    window.speechSynthesis.speak(utt);
   }
 
   private runHeadlessFallbackChunk(idx: number, chunk: SpeechChunk, token: number) {
     this.onChunkBecameActive(idx, chunk, token);
-    const est = estimateChunkDurationMs(chunk.text, this.settings.rate);
+    const plainSpoken = chunk.isSsml
+      ? chunk.speakText.replace(/<[^>]+>/g, '')
+      : chunk.speakText;
+    const estMs = estimateChunkDurationMs(plainSpoken, this.settings.rate);
     this.webPauseTimer = window.setTimeout(() => {
       if (!this.isPlaying || token !== this.sessionToken) return;
       this.handleChunkFinished(idx, token);
-    }, est);
+    }, estMs);
   }
 
   private onChunkBecameActive(idx: number, chunk: SpeechChunk, token: number) {
     this.activeChunkIdx = idx;
     this.sawBoundaryForCurrentChunk = false;
     this.syncCursorFromOffset(chunk.chapterStartChar);
-    this.startFallbackProgressTimer(chunk, token);
 
     if (Capacitor.isNativePlatform()) {
-      const preview = this.allSentences[this.currentSentenceIndex]?.text ?? chunk.text.slice(0, 80);
+      const preview = this.allSentences[this.currentSentenceIndex]?.text ?? '';
       void NovelVoiceTts.updateNotification({
         bookTitle: this.bookTitle,
         chapterTitle: this.chapterTitle,
@@ -683,101 +900,101 @@ export class TtsPlaybackController {
         isPlaying: true,
       }).catch(() => undefined);
     }
+
+    this.startProportionalFallback(chunk, token);
+    void this.fillLookaheadQueue(token, false);
   }
 
-  private handleBoundaryOffset(chunk: SpeechChunk, localCharOffset: number) {
+  private handleBoundaryOffset(chunk: SpeechChunk, localCharIndex: number) {
     this.sawBoundaryForCurrentChunk = true;
-    this.clearFallbackProgressTimer();
-    const chapterOffset = mapChunkLocalOffsetToChapterOffset(chunk, localCharOffset);
+    const chapterOffset = mapChunkLocalOffsetToChapterOffset(chunk, localCharIndex);
     this.syncCursorFromOffset(chapterOffset);
   }
 
   private handleChunkFinished(idx: number, token: number) {
     if (!this.isPlaying || token !== this.sessionToken) return;
-    this.clearFallbackProgressTimer();
+    this.clearProgressTimersOnly();
 
-    const finishedChunk = this.chunks[idx];
-    if (finishedChunk) {
-      // Snap visual cursor to end of finished chunk before advancing
-      const nextChunk = this.chunks[idx + 1];
-      if (nextChunk) {
-        this.syncCursorFromOffset(nextChunk.chapterStartChar);
-      }
+    const completedChunk = this.chunks[idx];
+    if (completedChunk) {
+      this.syncCursorFromOffset(completedChunk.chapterEndChar);
     }
 
-    if (idx >= this.chunks.length - 1) {
+    const nextIdx = idx + 1;
+    if (nextIdx >= this.chunks.length) {
+      if (this.stopAtEndOfChapter) {
+        this.stop();
+        return;
+      }
       this.isPlaying = false;
       this.callbacks.onPlaybackStateChange(false);
-      if (this.stopAtEndOfChapter) {
-        this.stopAtEndOfChapter = false;
-        this.stop();
+      this.callbacks.onChapterComplete();
+      return;
+    }
+
+    this.activeChunkIdx = nextIdx;
+
+    if (!Capacitor.isNativePlatform() && this.webFallbackMode) {
+      const pauseMs = completedChunk?.pauseAfterMs ?? 0;
+      const advance = () => {
+        if (!this.isPlaying || token !== this.sessionToken) return;
+        this.runHeadlessFallbackChunk(nextIdx, this.chunks[nextIdx], token);
+      };
+      if (pauseMs > 0) {
+        this.webPauseTimer = window.setTimeout(advance, pauseMs);
       } else {
-        this.callbacks.onChapterComplete();
+        advance();
       }
       return;
     }
 
-    this.activeChunkIdx = idx + 1;
-    if (this.webFallbackMode && this.activeChunkIdx < this.chunks.length) {
-      this.nextEnqueueIdx = Math.max(this.nextEnqueueIdx, this.activeChunkIdx + 1);
-      this.runHeadlessFallbackChunk(this.activeChunkIdx, this.chunks[this.activeChunkIdx], token);
-      return;
-    }
-    // Prefetch next chunk into QUEUE_ADD without flushing audio
     void this.fillLookaheadQueue(token, false);
   }
 
-  private startFallbackProgressTimer(chunk: SpeechChunk, token: number) {
-    this.clearFallbackProgressTimer();
-    const totalMs = estimateChunkDurationMs(chunk.text, this.settings.rate);
-    const startTs = performance.now();
-    const totalLen = Math.max(1, chunk.text.length);
+  private startProportionalFallback(chunk: SpeechChunk, token: number) {
+    this.clearProgressTimersOnly();
+    const plainSpoken = chunk.isSsml
+      ? chunk.speakText.replace(/<[^>]+>/g, '')
+      : chunk.speakText;
+    const totalLen = Math.max(1, plainSpoken.length);
+    const estDurationMs = estimateChunkDurationMs(plainSpoken, this.settings.rate);
+    const startedAt = performance.now();
+    const tickIntervalMs = Math.max(60, Math.round(120 / Math.max(1, this.settings.rate)));
 
     this.fallbackProgressTimer = window.setInterval(() => {
-      if (!this.isPlaying || token !== this.sessionToken || this.sawBoundaryForCurrentChunk) {
-        this.clearFallbackProgressTimer();
+      if (!this.isPlaying || token !== this.sessionToken) {
+        this.clearProgressTimersOnly();
         return;
       }
-      const elapsed = performance.now() - startTs;
-      const ratio = Math.min(0.98, elapsed / totalMs);
-      const approxLocal = Math.floor(ratio * totalLen);
-      const chapterOffset = mapChunkLocalOffsetToChapterOffset(chunk, approxLocal);
+      if (this.sawBoundaryForCurrentChunk) {
+        this.clearProgressTimersOnly();
+        return;
+      }
+      const elapsed = performance.now() - startedAt;
+      const ratio = Math.min(0.98, elapsed / estDurationMs);
+      const approxSpoken = Math.floor(ratio * totalLen);
+      const chapterOffset = mapChunkLocalOffsetToChapterOffset(chunk, approxSpoken);
       this.syncCursorFromOffset(chapterOffset);
-    }, 160);
+    }, tickIntervalMs);
   }
 
   private createWebUtterance(text: string, voiceURI: string): SpeechSynthesisUtterance {
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate = Math.max(0.5, Math.min(3.0, this.settings.rate));
-    utt.pitch = Math.max(0.5, Math.min(1.8, this.settings.pitch));
+    utt.pitch = Math.max(0.5, Math.min(2.0, this.settings.pitch));
+    utt.volume = this.getEffectiveVolume();
 
-    const voices = window.speechSynthesis.getVoices();
-    const matched = voiceURI
-      ? voices.find((v) => v.voiceURI === voiceURI)
-      : voices.find((v) => v.lang.toLowerCase().startsWith('id')) || voices[0];
-    if (matched) {
-      utt.voice = matched;
-      utt.lang = matched.lang;
+    if (voiceURI && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const match = window.speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI);
+      if (match) {
+        utt.voice = match;
+        utt.lang = match.lang;
+      }
     }
     return utt;
   }
 
-  private cancelActiveQueueOnly() {
-    this.clearFallbackProgressTimer();
-    if (this.webPauseTimer !== null) {
-      window.clearTimeout(this.webPauseTimer);
-      this.webPauseTimer = null;
-    }
-    this.utteranceToChunkIdx.clear();
-
-    if (Capacitor.isNativePlatform()) {
-      void NovelVoiceTts.stop().catch(() => undefined);
-    } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-  }
-
-  private clearFallbackProgressTimer() {
+  private clearProgressTimersOnly() {
     if (this.fallbackProgressTimer !== null) {
       window.clearInterval(this.fallbackProgressTimer);
       this.fallbackProgressTimer = null;
@@ -791,5 +1008,19 @@ export class TtsPlaybackController {
     }
     this.sleepRemainingSec = null;
     this.callbacks.onSleepTimerTick(null);
+  }
+
+  private cancelActiveQueueOnly() {
+    this.clearProgressTimersOnly();
+    if (this.webPauseTimer !== null) {
+      window.clearTimeout(this.webPauseTimer);
+      this.webPauseTimer = null;
+    }
+    this.utteranceToChunkIdx.clear();
+    if (Capacitor.isNativePlatform()) {
+      void NovelVoiceTts.stop().catch(() => undefined);
+    } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
   }
 }
