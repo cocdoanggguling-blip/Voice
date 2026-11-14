@@ -1,0 +1,6 @@
+{
+  "name": "NovelVoice",
+  "description": "Pembaca e-book EPUB minimalis dengan Text-to-Speech latar belakang, jeda koma natural, highlight kata sinkron, dan terjemahan langsung.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

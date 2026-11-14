@@ -1,0 +1,110 @@
+name: Build NovelVoice Android APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build APK (Release / Debug Fallback)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup JDK 21 (required by Capacitor 8 / AGP 8.13)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Ensure Android platform & sync Capacitor
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Decode Android Keystore (if configured)
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+            echo "has_signing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Keystore secrets belum lengkap, menggunakan fallback build Debug APK."
+            echo "has_signing=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Gradle permissions
+        run: chmod +x android/gradlew
+
+      - name: Build Signed Release APK
+        if: steps.signing.outputs.has_signing == 'true'
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Build Debug APK (Fallback)
+        if: steps.signing.outputs.has_signing != 'true'
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Prepare APK artifact path
+        id: apk
+        run: |
+          mkdir -p release-artifacts
+          if [ "${{ steps.signing.outputs.has_signing }}" = "true" ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk release-artifacts/NovelVoice-release.apk
+            echo "apk_path=release-artifacts/NovelVoice-release.apk" >> "$GITHUB_OUTPUT"
+            echo "apk_name=NovelVoice-release.apk" >> "$GITHUB_OUTPUT"
+          else
+            cp android/app/build/outputs/apk/debug/app-debug.apk release-artifacts/NovelVoice-debug.apk
+            echo "apk_path=release-artifacts/NovelVoice-debug.apk" >> "$GITHUB_OUTPUT"
+            echo "apk_name=NovelVoice-debug.apk" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.apk_name }}
+          path: ${{ steps.apk.outputs.apk_path }}
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: NovelVoice v1.0.${{ github.run_number }}
+          body: |
+            Build otomatis NovelVoice APK dari commit `${{ github.sha }}`.
+            - Signed Release: `${{ steps.signing.outputs.has_signing }}`
+          files: ${{ steps.apk.outputs.apk_path }}
+          draft: false
+          prerelease: false

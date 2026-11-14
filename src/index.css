@@ -1,0 +1,90 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --nv-bg: #faf9f6;
+    --nv-surface: #ffffff;
+    --nv-text: #1c1917;
+    --nv-muted: #68635e;
+    --nv-border: rgba(28, 25, 23, 0.09);
+    --nv-accent: #b45309;
+    --nv-accent-soft: rgba(180, 83, 9, 0.12);
+    --nv-word-highlight: rgba(217, 119, 6, 0.28);
+  }
+
+  .theme-sepia {
+    --nv-bg: #f4ecd8;
+    --nv-surface: #fbf6ea;
+    --nv-text: #3b2f23;
+    --nv-muted: #72604d;
+    --nv-border: rgba(59, 47, 35, 0.12);
+    --nv-accent: #9a3412;
+    --nv-accent-soft: rgba(154, 52, 18, 0.11);
+    --nv-word-highlight: rgba(194, 65, 12, 0.24);
+  }
+
+  .theme-dark,
+  .dark {
+    --nv-bg: #121417;
+    --nv-surface: #1a1d22;
+    --nv-text: #e6e3dd;
+    --nv-muted: #989b9f;
+    --nv-border: rgba(230, 227, 221, 0.1);
+    --nv-accent: #f59e0b;
+    --nv-accent-soft: rgba(245, 158, 11, 0.14);
+    --nv-word-highlight: rgba(245, 158, 11, 0.34);
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: var(--nv-bg);
+    color: var(--nv-text);
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+.font-reader-literata {
+  font-family: 'Literata', Georgia, 'Times New Roman', serif;
+}
+
+.font-reader-jakarta {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.font-reader-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+.tts-sentence-active {
+  background-color: var(--nv-accent-soft);
+  border-radius: 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.tts-word-active {
+  background-color: var(--nv-word-highlight);
+  border-radius: 3px;
+  text-decoration: underline;
+  text-decoration-color: var(--nv-accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
