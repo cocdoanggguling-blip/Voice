@@ -47,22 +47,6 @@
 
 ---
 
-## Pengembangan Lokal & Build APK Otomatis (GitHub Actions)
-
-```bash
-npm install
-npm run build
-npx cap sync android
-```
-
-Workflow build APK otomatis tersedia di `.github/workflows/build-apk.yml` (membutuhkan Node 22 + JDK 21 + Android SDK).
-Untuk menandatangani APK Release secara otomatis melalui GitHub Actions, tambahkan repository secrets berikut:
-- `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_KEY_PASSWORD`
-
----
 
 ## Batasan Mesin TTS Android
 - **Highlight per kata (`onRangeStart`)**: Dukungan event posisi karakter bergantung pada masing-masing mesin TTS yang terpasang di Android (misalnya Google Speech Services mendukungnya di sebagian besar voice lokal; beberapa mesin pihak ketiga tidak mengirim `onRangeStart`, sehingga NovelVoice otomatis menggunakan estimasi proporsional berdasarkan kecepatan bicara).
