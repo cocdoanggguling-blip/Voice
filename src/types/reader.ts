@@ -190,6 +190,7 @@ export interface SentenceSegment {
   words: WordToken[];
   isFootnote?: boolean;
   detectedLang?: 'id' | 'en';
+  langTag?: string;
 }
 
 export interface InlineFormatSpan {
@@ -236,6 +237,7 @@ export interface SpeechChunk {
   chapterEndChar: number;
   pauseAfterMs: number;
   detectedLang?: 'id' | 'en';
+  langTag?: string;
   slices: SpeechChunkSlice[];
   spokenOffsetMap?: SpokenOffsetSegment[];
 }
@@ -320,6 +322,20 @@ export interface TextReplaceRule {
   priority: number;
   enabled: boolean;
   createdAt: number;
+  updatedAt: number;
+}
+
+export interface TtsLastPosition {
+  bookId: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  paragraphIndex: number;
+  sentenceInParagraph: number;
+  paragraphSentenceCount: number;
+  originalCharOffset: number;
+  sentenceIndex: number;
+  wordIndex: number;
+  snippet: string;
   updatedAt: number;
 }
 

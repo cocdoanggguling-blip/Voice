@@ -110,7 +110,7 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
   const clampedChapterPct = Math.max(0, Math.min(100, chapterProgressPercent));
 
   return (
-    <div className="sticky bottom-0 z-30">
+    <div data-reader-bottom-bar="true" className="sticky bottom-0 z-30">
       {/* Razor-thin Chapter Progress Line Always Visible Under Text */}
       <div className="mx-auto max-w-5xl px-3 py-1">
         <div className="relative flex h-[2px] w-full items-center rounded-full bg-[var(--nv-border)]/50">

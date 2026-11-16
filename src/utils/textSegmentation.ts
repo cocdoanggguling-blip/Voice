@@ -580,6 +580,7 @@ export function buildSpeechChunksFromOffset(
             chapterEndChar: segEndChar,
             pauseAfterMs: pauseMs,
             detectedLang: sent.detectedLang,
+            langTag: sent.langTag,
             slices: [
               {
                 paragraphIndex: para.index,
@@ -608,6 +609,7 @@ export function buildSpeechChunksFromOffset(
     chapterEndChar: number;
     endsParagraph: boolean;
     detectedLang?: 'id' | 'en';
+    langTag?: string;
   }
 
   const atomicPieces: ParaSegment[] = [];
@@ -648,6 +650,7 @@ export function buildSpeechChunksFromOffset(
         chapterEndChar: last.chapterEndChar,
         endsParagraph: isParaEnd,
         detectedLang: first.detectedLang,
+        langTag: first.langTag,
       });
       groupSentences = [];
       groupLen = 0;
@@ -692,6 +695,7 @@ export function buildSpeechChunksFromOffset(
               chapterEndChar: pStart + piece.length,
               endsParagraph: isLast && cut >= sliceText.length,
               detectedLang: sent.detectedLang,
+              langTag: sent.langTag,
             });
           }
           subCursor = cut;
@@ -757,6 +761,7 @@ export function buildSpeechChunksFromOffset(
         chapterEndChar: lastPiece.chapterEndChar,
         pauseAfterMs: lastPiece.endsParagraph ? options.paragraphPauseMs : 0,
         detectedLang: bufferPieces[0].detectedLang,
+        langTag: bufferPieces[0].langTag,
         slices,
         spokenOffsetMap: offsetMap,
       });
@@ -778,11 +783,14 @@ export function buildSpeechChunksFromOffset(
 
     // Merge consecutive short paragraphs (e.g. short 1-line dialog) up to shortMergeTarget
     // without crossing detected language boundaries
-    const prevLang = bufferPieces[bufferPieces.length - 1]?.detectedLang;
+    const prevPiece = bufferPieces[bufferPieces.length - 1];
+    const prevLang = prevPiece?.detectedLang;
+    const prevTag = prevPiece?.langTag;
     if (
       piece.endsParagraph &&
       isShortPiece(piece.text.length) &&
       (!prevLang || !piece.detectedLang || prevLang === piece.detectedLang) &&
+      (!prevTag || !piece.langTag || prevTag === piece.langTag) &&
       bufferLen + 1 + piece.text.length <= shortMergeTarget
     ) {
       bufferPieces.push(piece);

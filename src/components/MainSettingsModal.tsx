@@ -285,9 +285,9 @@ export const MainSettingsModal: React.FC<MainSettingsModalProps> = ({
 
             <div className="flex items-center justify-between gap-3 rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-bg)] px-3.5 py-2.5">
               <div>
-                <p className="text-xs font-semibold">Terjemahkan Paragraf Otomatis</p>
+                <p className="text-xs font-semibold">Mode Terjemahan Halaman</p>
                 <p className="text-[11px] text-[var(--nv-chrome-muted)]">
-                  Tampilkan terjemahan di bawah teks asli saat membaca online
+                  Gantikan teks asli dengan hasil terjemahan &amp; sinkronkan ke suara TTS
                 </p>
               </div>
               <ToggleSwitch

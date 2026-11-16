@@ -319,6 +319,8 @@ export class TtsPlaybackController {
   private chapterIndex = 0;
   private bookCtx: BookReplaceContext = { bookId: '' };
   private ttsOnlyRules: TextReplaceRule[] = [];
+  private translatedFlags: boolean[] = [];
+  private hasPendingTranslations = false;
   private callbacks: TtsPlaybackCallbacks;
 
   private isPlaying = false;
@@ -415,17 +417,79 @@ export class TtsPlaybackController {
     allSentences: SentenceSegment[],
     initialCharOffset = 0,
     chapterIndex = 0,
-    bookCtx?: BookReplaceContext
+    bookCtx?: BookReplaceContext,
+    translationMeta?: { translatedFlags?: boolean[]; hasPendingTranslations?: boolean }
   ) {
     this.bookTitle = bookTitle;
     this.chapterTitle = chapterTitle;
     this.paragraphs = paragraphs;
     this.allSentences = allSentences;
     this.chapterIndex = chapterIndex;
+    this.translatedFlags = translationMeta?.translatedFlags ?? [];
+    this.hasPendingTranslations = Boolean(translationMeta?.hasPendingTranslations);
     if (bookCtx) {
       this.bookCtx = bookCtx;
     }
     this.syncCursorFromOffset(initialCharOffset);
+  }
+
+  /**
+   * Updates rendered paragraphs/sentences incrementally while background batch
+   * translation finishes paragraphs ahead of the currently playing chunk, rebuilding
+   * only un-enqueued upcoming chunks so TTS never stutters and reads translations
+   * as soon as they are ready.
+   */
+  public updateRenderedContextKeepPlayback(
+    paragraphs: ParsedParagraph[],
+    allSentences: SentenceSegment[],
+    translatedFlags: boolean[],
+    hasPendingTranslations: boolean
+  ) {
+    this.paragraphs = paragraphs;
+    this.allSentences = allSentences;
+    this.translatedFlags = translatedFlags;
+    this.hasPendingTranslations = hasPendingTranslations;
+
+    if (!this.isPlaying || this.chunks.length === 0) {
+      return;
+    }
+
+    const lastEnqueuedIdx = Math.max(this.activeChunkIdx, this.nextEnqueueIdx - 1);
+    const lastEnqueuedChunk = this.chunks[lastEnqueuedIdx];
+    const lastEnqueuedPara =
+      lastEnqueuedChunk?.slices[lastEnqueuedChunk.slices.length - 1]?.paragraphIndex ?? 0;
+
+    const nextPara = paragraphs.find((p) => p.index > lastEnqueuedPara);
+    const tailChunks = nextPara
+      ? buildSpeechChunksFromOffset(paragraphs, nextPara.chapterStartChar, {
+          readingMode: this.settings.readingMode,
+          chunkSizeChars: this.settings.chunkSizeChars,
+          maxEngineInputLength: this.capabilities.maxSpeechInputLength,
+          paragraphPauseMs: this.settings.paragraphPauseMs,
+          commaPauseMs: this.settings.commaPauseMs,
+          sentencePauseMs: this.settings.sentencePauseMs,
+          ssmlSupported: this.capabilities.ssmlSupported,
+          readFootnotes: this.settings.readFootnotes,
+          skipHeadersAndFootnotes: this.settings.skipHeadersAndFootnotes,
+          readChapterTitle: this.settings.readChapterTitle,
+          skipParentheses: this.settings.skipParentheses,
+          skipSymbolsAndQuotes: this.settings.skipSymbolsAndQuotes,
+          pronunciationDict: this.settings.pronunciationDict,
+          ttsOnlyRules: this.ttsOnlyRules,
+          chapterIndex: this.chapterIndex,
+          bookCtx: this.bookCtx,
+        })
+      : [];
+
+    const head = this.chunks.slice(0, lastEnqueuedIdx + 1);
+    const reindexedTail = tailChunks.map((c, offset) => ({
+      ...c,
+      chunkIndex: head.length + offset,
+    }));
+    this.chunks = [...head, ...reindexedTail];
+    this.nextEnqueueIdx = head.length;
+
+    void this.fillLookaheadQueue(this.sessionToken, false);
   }
 
   public setTtsReplaceRules(rules: TextReplaceRule[], bookCtx?: BookReplaceContext) {
@@ -788,6 +852,18 @@ export class TtsPlaybackController {
       const useFlush = flushFirst && idx === 0;
       const desiredVoice = this.resolveVoiceForLang(chunk.detectedLang);
 
+      // While translation batch is actively fetching, defer enqueueing lookahead chunks
+      // whose paragraphs haven't finished translating yet so they pick up translated text
+      // cleanly instead of prematurely queuing original fallback text.
+      if (
+        idx > this.activeChunkIdx &&
+        this.hasPendingTranslations &&
+        this.translatedFlags.length > 0 &&
+        chunk.slices.some((s) => !this.translatedFlags[s.paragraphIndex])
+      ) {
+        break;
+      }
+
       // Avoid mixing voices inside a single queued native session if multiLangAuto switches language
       if (
         Capacitor.isNativePlatform() &&
@@ -856,7 +932,7 @@ export class TtsPlaybackController {
     const plainSpoken = chunk.isSsml
       ? chunk.speakText.replace(/<[^>]+>/g, '')
       : chunk.speakText;
-    const utt = this.createWebUtterance(plainSpoken, voiceURI);
+    const utt = this.createWebUtterance(plainSpoken, voiceURI, chunk.langTag);
 
     let started = false;
     let finished = false;
@@ -1022,11 +1098,18 @@ export class TtsPlaybackController {
     }, tickIntervalMs);
   }
 
-  private createWebUtterance(text: string, voiceURI: string): SpeechSynthesisUtterance {
+  private createWebUtterance(
+    text: string,
+    voiceURI: string,
+    langTag?: string
+  ): SpeechSynthesisUtterance {
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate = Math.max(0.5, Math.min(3.0, this.settings.rate));
     utt.pitch = Math.max(0.5, Math.min(2.0, this.settings.pitch));
     utt.volume = this.getEffectiveVolume();
+    if (langTag) {
+      utt.lang = langTag;
+    }
 
     if (voiceURI && typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const match = window.speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI);

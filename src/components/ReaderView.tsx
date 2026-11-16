@@ -39,6 +39,7 @@ import {
   getBookFile,
   getChapterMetrics,
   getReadingPosition,
+  getTtsLastPosition,
   importReplaceRulesJson,
   listBookmarks,
   listHighlights,
@@ -49,6 +50,7 @@ import {
   saveManyTextReplaceRules,
   saveReadingPosition,
   saveTextReplaceRule,
+  saveTtsLastPosition,
   updateBookMetadata,
 } from '../services/storageService';
 import { translateText } from '../services/translationService';
@@ -84,6 +86,7 @@ import type {
   TocItem,
   TranslationResult,
   TtsEngineCapabilities,
+  TtsLastPosition,
   TtsSettings,
   TtsVoiceInfo,
   WordToken,
@@ -97,6 +100,12 @@ import {
 } from '../utils/bookMetrics';
 import { applyIndonesianHyphenation } from '../utils/hyphenationId';
 import {
+  buildParagraphTranslationSlotKey,
+  buildRenderedChapterModel,
+  mapRenderedOffsetToOriginalOffset,
+  mapSentenceCursorAcrossRender,
+} from '../utils/renderedTranslation';
+import {
   applyNonTtsRulesToPlainText,
   buildEffectiveChaptersForPreview,
   DEFAULT_FIND_REPLACE_SETTINGS,
@@ -107,6 +116,13 @@ import {
   findLocationAtChapterOffset,
   normalizeBookLocale,
 } from '../utils/textSegmentation';
+import {
+  buildTtsLastPositionSnapshot,
+  findTopmostVisibleParagraphIndex,
+  resolveStartFromViewportTarget,
+  resolveTtsResumeTarget,
+  type ParagraphViewportRect,
+} from '../utils/ttsStartPosition';
 import { AppearanceSheet } from './AppearanceSheet';
 import { BookSearchModal } from './BookSearchModal';
 import { FindReplacePopup } from './FindReplacePopup';
@@ -115,6 +131,7 @@ import { ReplaceRulesModal } from './ReplaceRulesModal';
 import { TocDrawer } from './TocDrawer';
 import { TranslationPopup } from './TranslationPopup';
 import { TtsSettingsSheet } from './TtsSettingsSheet';
+import { TtsStartChoiceModal } from './TtsStartChoiceModal';
 
 interface ReaderViewProps {
   bookMeta: BookMetadata;
@@ -286,12 +303,22 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   });
   const [sleepRemainingSec, setSleepRemainingSec] = useState<number | null>(null);
 
-  // Translation state
+  // Translation state (Readest-style in-place render layer)
   const [popupSourceText, setPopupSourceText] = useState('');
   const [popupSentenceIdx, setPopupSentenceIdx] = useState<number | null>(null);
   const [popupLoading, setPopupLoading] = useState(false);
   const [popupResult, setPopupResult] = useState<TranslationResult | null>(null);
   const [inlineTranslations, setInlineTranslations] = useState<Record<string, TranslationResult>>({});
+  const [translateRetryTick, setTranslateRetryTick] = useState(0);
+  const [isTranslatingBatch, setIsTranslatingBatch] = useState(false);
+
+  const [lastTtsPosition, setLastTtsPosition] = useState<TtsLastPosition | null>(() =>
+    getTtsLastPosition(bookMeta.id)
+  );
+  const [ttsChoiceModal, setTtsChoiceModal] = useState<{
+    open: boolean;
+    startHereParagraphIndex: number;
+  } | null>(null);
 
   const sentenceRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
   const controllerRef = useRef<TtsPlaybackController | null>(null);
@@ -302,6 +329,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const activeOffsetRef = useRef(activeCharOffset);
   const longPressTimerRef = useRef<number | null>(null);
   const undoTimerRef = useRef<number | null>(null);
+  const paragraphsVersionRef = useRef(0);
+  const prevSyncSignatureRef = useRef<string>('');
+  const prevRenderedSentencesRef = useRef<SentenceSegment[]>([]);
+  const prevTranslatedFlagsRef = useRef<boolean[]>([]);
+  const wasTtsPlayingRef = useRef(false);
 
   const seriesKey = useMemo(() => extractSeriesName(bookMeta), [bookMeta]);
   const safeBookLang = useMemo(() => normalizeBookLocale(bookMeta.language), [bookMeta.language]);
@@ -321,6 +353,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   );
   const replaceOptionsRef = useRef(replaceOptions);
   replaceOptionsRef.current = replaceOptions;
+  const readerSettingsRef = useRef(readerSettings);
+  readerSettingsRef.current = readerSettings;
+  const inlineTranslationsRef = useRef(inlineTranslations);
+  inlineTranslationsRef.current = inlineTranslations;
+  const paragraphsRef = useRef(paragraphs);
+  paragraphsRef.current = paragraphs;
+  const renderedParagraphsRef = useRef<ParsedParagraph[]>([]);
+  const renderedSentencesRef = useRef<SentenceSegment[]>([]);
 
   chapterIndexRef.current = chapterIndex;
   chaptersRef.current = chapters;
@@ -367,13 +407,26 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     readerSettings.readingMode,
   ]);
 
-  // Persist reading position helper
+  // Persist reading position helper (always normalized to immutable original chapter coordinates)
   const persistPosition = useCallback(
     async (cIdx: number, charOffset: number, sIdx: number, wIdx: number, totalChaps: number) => {
+      const origOffset =
+        cIdx === chapterIndexRef.current && renderedSentencesRef.current.length > 0
+          ? mapRenderedOffsetToOriginalOffset(
+              renderedSentencesRef.current,
+              sIdx,
+              paragraphsRef.current
+            )
+          : charOffset;
+      const denomSentences = Math.max(
+        1,
+        renderedSentencesRef.current.length || allSentences.length
+      );
+
       await saveReadingPosition({
         bookId: bookMeta.id,
         chapterIndex: cIdx,
-        charOffset,
+        charOffset: origOffset,
         sentenceIndex: sIdx,
         wordIndex: wIdx,
         scrollRatio: 0,
@@ -382,12 +435,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
       const pct =
         totalChaps <= 1
-          ? allSentences.length > 0
-            ? Math.round(((sIdx + 1) / allSentences.length) * 100)
+          ? renderedSentencesRef.current.length > 0 || allSentences.length > 0
+            ? Math.round(((sIdx + 1) / denomSentences) * 100)
             : 0
           : Math.min(
               100,
-              Math.round(((cIdx + (sIdx + 1) / Math.max(1, allSentences.length)) / totalChaps) * 100)
+              Math.round(((cIdx + (sIdx + 1) / denomSentences) / totalChaps) * 100)
             );
 
       const updated: BookMetadata = {
@@ -402,30 +455,64 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     [allSentences.length, bookMeta, onBookProgressUpdated]
   );
 
+  const persistTtsLastSnapshot = useCallback(
+    (sIdx: number, wIdx: number, updateState = true) => {
+      const cIdx = chapterIndexRef.current;
+      const chapTitle = chaptersRef.current[cIdx]?.title || `Bab ${cIdx + 1}`;
+      const snap = buildTtsLastPositionSnapshot({
+        bookId: bookMeta.id,
+        chapterIndex: cIdx,
+        chapterTitle: chapTitle,
+        activeSentenceIndex: sIdx,
+        activeWordIndex: wIdx,
+        renderedParagraphs: renderedParagraphsRef.current,
+        renderedSentences: renderedSentencesRef.current,
+        originalParagraphs: paragraphsRef.current,
+      });
+      if (!snap) return;
+      saveTtsLastPosition(snap);
+      if (updateState) {
+        setLastTtsPosition(snap);
+      }
+    },
+    [bookMeta.id]
+  );
+
   // Initialize TTS controller once
   useEffect(() => {
+    setLastTtsPosition(getTtsLastPosition(bookMeta.id));
     const controller = new TtsPlaybackController(ttsSettings, {
       onHighlight: (sIdx, wIdx, charOffset) => {
+        const sentenceChanged = sIdx !== activeSentenceRef.current;
         activeWordRef.current = wIdx;
         activeOffsetRef.current = charOffset;
-        if (sIdx !== activeSentenceRef.current) {
+        if (sentenceChanged) {
           activeSentenceRef.current = sIdx;
           setActiveSentenceIdx(sIdx);
           setActiveCharOffset(charOffset);
         }
+        if (controller.getIsPlaying() && sentenceChanged) {
+          persistTtsLastSnapshot(sIdx, wIdx, false);
+        }
       },
       onPlaybackStateChange: (playing) => {
         setIsPlaying(playing);
-        if (!playing) {
-          const pos = controller.getPosition();
-          void persistPosition(
-            chapterIndexRef.current,
-            pos.charOffset,
-            pos.sentenceIndex,
-            pos.wordIndex,
-            chaptersRef.current.length || bookMeta.totalChapters
-          );
+        if (playing) {
+          wasTtsPlayingRef.current = true;
+          return;
         }
+        const pos = controller.getPosition();
+        if (wasTtsPlayingRef.current) {
+          wasTtsPlayingRef.current = false;
+          persistTtsLastSnapshot(pos.sentenceIndex, pos.wordIndex, true);
+        }
+        void persistPosition(
+          chapterIndexRef.current,
+          pos.charOffset,
+          pos.sentenceIndex,
+          pos.wordIndex,
+          chaptersRef.current.length || bookMeta.totalChapters
+        );
       },
       onChapterComplete: () => {
         const nextChap = chapterIndexRef.current + 1;
@@ -452,6 +539,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
     return () => {
       const pos = controller.getPosition();
+      if (controller.getIsPlaying() || wasTtsPlayingRef.current) {
+        wasTtsPlayingRef.current = false;
+        persistTtsLastSnapshot(pos.sentenceIndex, pos.wordIndex, false);
+      }
       void saveReadingPosition({
         bookId: bookMeta.id,
         chapterIndex: chapterIndexRef.current,
@@ -581,6 +672,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
         const loc = findLocationAtChapterOffset(segs.allSentences, initialOffset);
 
+        paragraphsVersionRef.current += 1;
         setChapterIndex(startChap);
         setParagraphs(segs.paragraphs);
         setAllSentences(segs.allSentences);
@@ -592,17 +684,51 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
         const chapTitle =
           opened.chapters[startChap]?.title || segs.chapterTitle || `Bab ${startChap + 1}`;
+        // Build initial rendered model immediately from already-available cache entries if any
+        const initialRendered = buildRenderedChapterModel(segs.paragraphs, segs.allSentences, {
+          translateEnabled: readerSettings.paragraphTranslateEnabled,
+          targetLanguage: readerSettings.targetLanguage,
+          bookLocale: safeBookLang,
+          getTranslatedText: (para) => {
+            const slotKey = buildParagraphTranslationSlotKey(
+              startChap,
+              para.id,
+              para.rawText,
+              readerSettings.targetLanguage,
+              readerSettings.translationProvider,
+              readerSettings.geminiModel
+            );
+            const res = inlineTranslations[slotKey];
+            return res?.ok && res.translatedText.trim() ? res.translatedText : null;
+          },
+        });
+        chaptersRef.current = opened.chapters;
+        chapterIndexRef.current = startChap;
+        paragraphsRef.current = segs.paragraphs;
+        renderedParagraphsRef.current = initialRendered.paragraphs;
+        renderedSentencesRef.current = initialRendered.allSentences;
+        prevRenderedSentencesRef.current = initialRendered.allSentences;
+        prevTranslatedFlagsRef.current = initialRendered.translatedParagraphFlags;
+        const initModelScope =
+          readerSettings.translationProvider === 'gemini' ? readerSettings.geminiModel : '';
+        prevSyncSignatureRef.current = `${startChap}|${paragraphsVersionRef.current}|${readerSettings.paragraphTranslateEnabled}|${readerSettings.targetLanguage}|${readerSettings.translationProvider}|${initModelScope}`;
+
         controllerRef.current?.setBookContext(
           bookMeta.title,
           chapTitle,
-          segs.paragraphs,
-          segs.allSentences,
+          initialRendered.paragraphs,
+          initialRendered.allSentences,
           loc.chapterOffset,
           startChap,
-          bookCtx
+          bookCtx,
+          {
+            translatedFlags: initialRendered.translatedParagraphFlags,
+            hasPendingTranslations:
+              readerSettings.paragraphTranslateEnabled && segs.paragraphs.length > 0,
+          }
         );
 
-        if (autoStartTts && segs.allSentences.length > 0) {
+        if (autoStartTts && initialRendered.allSentences.length > 0) {
           setTtsBarExpanded(true);
           void controllerRef.current?.playFromOffset(loc.chapterOffset);
         }
@@ -671,26 +797,44 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         safeBookLang,
         nextOpts
       );
-      const loc = findLocationAtChapterOffset(segs.allSentences, keepOffset);
+      const origLoc = findLocationAtChapterOffset(segs.allSentences, keepOffset);
+      const rs = readerSettingsRef.current;
+      const nextRendered = buildRenderedChapterModel(segs.paragraphs, segs.allSentences, {
+        translateEnabled: rs.paragraphTranslateEnabled,
+        targetLanguage: rs.targetLanguage,
+        bookLocale: safeBookLang,
+        getTranslatedText: () => null,
+      });
+
+      paragraphsVersionRef.current += 1;
+      prevRenderedSentencesRef.current = nextRendered.allSentences;
+      prevTranslatedFlagsRef.current = nextRendered.translatedParagraphFlags;
+      const ruleModelScope = rs.translationProvider === 'gemini' ? rs.geminiModel : '';
+      prevSyncSignatureRef.current = `${currentChap}|${paragraphsVersionRef.current}|${rs.paragraphTranslateEnabled}|${rs.targetLanguage}|${rs.translationProvider}|${ruleModelScope}`;
 
       setParagraphs(segs.paragraphs);
       setAllSentences(segs.allSentences);
-      setActiveSentenceIdx(loc.sentenceIndex);
-      activeSentenceRef.current = loc.sentenceIndex;
-      activeWordRef.current = loc.wordIndex;
-      activeOffsetRef.current = loc.chapterOffset;
-      setActiveCharOffset(loc.chapterOffset);
+      setActiveSentenceIdx(origLoc.sentenceIndex);
+      activeSentenceRef.current = origLoc.sentenceIndex;
+      activeWordRef.current = origLoc.wordIndex;
+      activeOffsetRef.current = origLoc.chapterOffset;
+      setActiveCharOffset(origLoc.chapterOffset);
 
       const chapTitle =
         openedEpub.chapters[currentChap]?.title || segs.chapterTitle || `Bab ${currentChap + 1}`;
       controllerRef.current?.setBookContext(
         bookMeta.title,
         chapTitle,
-        segs.paragraphs,
-        segs.allSentences,
-        loc.chapterOffset,
+        nextRendered.paragraphs,
+        nextRendered.allSentences,
+        origLoc.chapterOffset,
         currentChap,
-        bookCtx
+        bookCtx,
+        {
+          translatedFlags: nextRendered.translatedParagraphFlags,
+          hasPendingTranslations:
+            rs.paragraphTranslateEnabled && segs.paragraphs.length > 0,
+        }
       );
 
       await clearChapterMetrics(bookMeta.id);
@@ -710,7 +854,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   );
 
   const handleSelectChapter = useCallback(
-    async (targetIndex: number, autoPlayAfterLoad = false, targetCharOffset = 0) => {
+    async (
+      targetIndex: number,
+      autoPlayAfterLoad = false,
+      targetCharOffset = 0,
+      resumeTtsSnapshot?: TtsLastPosition
+    ) => {
       if (!openedEpub) return;
       const clamped = Math.max(0, Math.min(targetIndex, openedEpub.chapters.length - 1));
       controllerRef.current?.pause();
@@ -721,18 +870,71 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         safeBookLang,
         replaceOptionsRef.current
       );
-      const loc = findLocationAtChapterOffset(segs.allSentences, targetCharOffset);
+      const origLoc = findLocationAtChapterOffset(segs.allSentences, targetCharOffset);
+      const rs = readerSettingsRef.current;
+      const cachedTranslations = inlineTranslationsRef.current;
+      const nextRendered = buildRenderedChapterModel(segs.paragraphs, segs.allSentences, {
+        translateEnabled: rs.paragraphTranslateEnabled,
+        targetLanguage: rs.targetLanguage,
+        bookLocale: safeBookLang,
+        getTranslatedText: (para) => {
+          const slotKey = buildParagraphTranslationSlotKey(
+            clamped,
+            para.id,
+            para.rawText,
+            rs.targetLanguage,
+            rs.translationProvider,
+            rs.geminiModel
+          );
+          const res = cachedTranslations[slotKey];
+          return res?.ok && res.translatedText.trim() ? res.translatedText : null;
+        },
+      });
+      const resolvedFromResume = resumeTtsSnapshot
+        ? resolveTtsResumeTarget(
+            resumeTtsSnapshot,
+            nextRendered.paragraphs,
+            nextRendered.allSentences
+          )
+        : null;
+      const targetRenderedPara = resolvedFromResume
+        ? nextRendered.paragraphs[resolvedFromResume.paragraphIndex]
+        : nextRendered.paragraphs[origLoc.paragraphIndex];
+      const nextLoc = resolvedFromResume
+        ? {
+            sentenceIndex: resolvedFromResume.sentenceIndex,
+            wordIndex: resolvedFromResume.wordIndex,
+            chapterOffset: resolvedFromResume.chapterOffset,
+            paragraphIndex: resolvedFromResume.paragraphIndex,
+          }
+        : findLocationAtChapterOffset(
+            nextRendered.allSentences,
+            targetRenderedPara?.chapterStartChar ?? 0
+          );
+
+      paragraphsVersionRef.current += 1;
+      chapterIndexRef.current = clamped;
+      paragraphsRef.current = segs.paragraphs;
+      renderedParagraphsRef.current = nextRendered.paragraphs;
+      renderedSentencesRef.current = nextRendered.allSentences;
+      prevRenderedSentencesRef.current = nextRendered.allSentences;
+      prevTranslatedFlagsRef.current = nextRendered.translatedParagraphFlags;
+      const nextModelScope = rs.translationProvider === 'gemini' ? rs.geminiModel : '';
+      prevSyncSignatureRef.current = `${clamped}|${paragraphsVersionRef.current}|${rs.paragraphTranslateEnabled}|${rs.targetLanguage}|${rs.translationProvider}|${nextModelScope}`;
 
       setChapterIndex(clamped);
       setParagraphs(segs.paragraphs);
       setAllSentences(segs.allSentences);
-      setActiveSentenceIdx(loc.sentenceIndex);
-      activeSentenceRef.current = loc.sentenceIndex;
-      activeWordRef.current = loc.wordIndex;
-      activeOffsetRef.current = loc.chapterOffset;
-      setActiveCharOffset(loc.chapterOffset);
-      setPageIndex(0);
-      setInlineTranslations({});
+      setActiveSentenceIdx(nextLoc.sentenceIndex);
+      activeSentenceRef.current = nextLoc.sentenceIndex;
+      activeWordRef.current = nextLoc.wordIndex;
+      activeOffsetRef.current = nextLoc.chapterOffset;
+      setActiveCharOffset(nextLoc.chapterOffset);
+      const nextPage =
+        rs.readingMode === 'paginated'
+          ? Math.floor((nextLoc.paragraphIndex ?? 0) / PARAGRAPHS_PER_PAGE)
+          : 0;
+      setPageIndex(nextPage);
       setSelectionMenu(null);
 
       const chapTitle =
@@ -740,31 +942,244 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       controllerRef.current?.setBookContext(
         bookMeta.title,
         chapTitle,
-        segs.paragraphs,
-        segs.allSentences,
-        loc.chapterOffset,
+        nextRendered.paragraphs,
+        nextRendered.allSentences,
+        nextLoc.chapterOffset,
         clamped,
-        bookCtx
+        bookCtx,
+        {
+          translatedFlags: nextRendered.translatedParagraphFlags,
+          hasPendingTranslations:
+            rs.paragraphTranslateEnabled &&
+            nextRendered.translatedParagraphFlags.some((flag) => !flag),
+        }
       );
 
       await persistPosition(
         clamped,
-        loc.chapterOffset,
-        loc.sentenceIndex,
-        loc.wordIndex,
+        resumeTtsSnapshot?.originalCharOffset ?? origLoc.chapterOffset,
+        nextLoc.sentenceIndex,
+        nextLoc.wordIndex,
         openedEpub.chapters.length
       );
 
-      if (autoPlayAfterLoad && segs.allSentences.length > 0) {
-        void controllerRef.current?.playFromOffset(loc.chapterOffset);
+      if (autoPlayAfterLoad && nextRendered.allSentences.length > 0) {
+        void controllerRef.current?.playFromOffset(nextLoc.chapterOffset);
+        window.setTimeout(() => {
+          sentenceRefs.current
+            .get(nextLoc.sentenceIndex)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 80);
       } else {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     },
-    [bookCtx, bookMeta.title, openedEpub, persistPosition, safeBookLang]
+    [PARAGRAPHS_PER_PAGE, bookCtx, bookMeta.title, openedEpub, persistPosition, safeBookLang]
   );
 
-  // Compute virtual pages dynamically from layout settings & viewport
+  // Build non-destructive Readest-style display & TTS chapter model from immutable original `paragraphs`
+  const renderedModel = useMemo(
+    () =>
+      buildRenderedChapterModel(paragraphs, allSentences, {
+        translateEnabled: readerSettings.paragraphTranslateEnabled,
+        targetLanguage: readerSettings.targetLanguage,
+        bookLocale: safeBookLang,
+        getTranslatedText: (para) => {
+          const slotKey = buildParagraphTranslationSlotKey(
+            chapterIndex,
+            para.id,
+            para.rawText,
+            readerSettings.targetLanguage,
+            readerSettings.translationProvider,
+            readerSettings.geminiModel
+          );
+          const res = inlineTranslations[slotKey];
+          return res?.ok && res.translatedText.trim() ? res.translatedText : null;
+        },
+      }),
+    [
+      allSentences,
+      chapterIndex,
+      inlineTranslations,
+      paragraphs,
+      readerSettings.geminiModel,
+      readerSettings.paragraphTranslateEnabled,
+      readerSettings.targetLanguage,
+      readerSettings.translationProvider,
+      safeBookLang,
+    ]
+  );
+
+  const renderedParagraphs = renderedModel.paragraphs;
+  renderedParagraphsRef.current = renderedParagraphs;
+  const renderedSentences = renderedModel.allSentences;
+  renderedSentencesRef.current = renderedSentences;
+  const renderedLocale = renderedModel.renderedLocale;
+  const translatedParagraphFlags = renderedModel.translatedParagraphFlags;
+
+  const translationStats = useMemo(() => {
+    if (!readerSettings.paragraphTranslateEnabled || paragraphs.length === 0) {
+      return { total: 0, translated: 0, pending: 0, errorMessage: null as string | null };
+    }
+    let translated = 0;
+    let errored = 0;
+    let firstError: string | null = null;
+    for (let i = 0; i < paragraphs.length; i++) {
+      const p = paragraphs[i];
+      const slotKey = buildParagraphTranslationSlotKey(
+        chapterIndex,
+        p.id,
+        p.rawText,
+        readerSettings.targetLanguage,
+        readerSettings.translationProvider,
+        readerSettings.geminiModel
+      );
+      const res = inlineTranslations[slotKey];
+      if (res?.ok && res.translatedText.trim()) {
+        translated++;
+      } else if (res && !res.ok) {
+        errored++;
+        if (!firstError) firstError = res.error || 'Sebagian paragraf gagal diterjemahkan.';
+      }
+    }
+    const pending = Math.max(0, paragraphs.length - translated - errored);
+    return {
+      total: paragraphs.length,
+      translated,
+      pending,
+      errorMessage: firstError,
+    };
+  }, [
+    chapterIndex,
+    inlineTranslations,
+    paragraphs,
+    readerSettings.geminiModel,
+    readerSettings.paragraphTranslateEnabled,
+    readerSettings.targetLanguage,
+    readerSettings.translationProvider,
+  ]);
+
+  // Synchronize rendered content (ON/OFF/language switch & incremental batch completions) with TTS controller
+  useEffect(() => {
+    const controller = controllerRef.current;
+    if (!controller || renderedParagraphs.length === 0) return;
+
+    const modelScope =
+      readerSettings.translationProvider === 'gemini' ? readerSettings.geminiModel : '';
+    const nextSyncSignature = `${chapterIndex}|${paragraphsVersionRef.current}|${readerSettings.paragraphTranslateEnabled}|${readerSettings.targetLanguage}|${readerSettings.translationProvider}|${modelScope}`;
+    const chapTitle =
+      chapters[chapterIndex]?.title || `Bab ${chapterIndex + 1}`;
+    const hasPending =
+      readerSettings.paragraphTranslateEnabled &&
+      (isTranslatingBatch || translationStats.pending > 0);
+
+    const prevSentences =
+      prevRenderedSentencesRef.current.length > 0
+        ? prevRenderedSentencesRef.current
+        : renderedSentences;
+
+    if (prevSyncSignatureRef.current !== nextSyncSignature) {
+      const wasPlaying = controller.getIsPlaying();
+      const mapped = mapSentenceCursorAcrossRender(
+        prevSentences,
+        activeSentenceRef.current,
+        renderedParagraphs,
+        renderedSentences
+      );
+
+      activeSentenceRef.current = mapped.sentenceIndex;
+      activeWordRef.current = mapped.wordIndex;
+      activeOffsetRef.current = mapped.chapterOffset;
+      setActiveSentenceIdx(mapped.sentenceIndex);
+      setActiveCharOffset(mapped.chapterOffset);
+
+      controller.setBookContext(
+        bookMeta.title,
+        chapTitle,
+        renderedParagraphs,
+        renderedSentences,
+        mapped.chapterOffset,
+        chapterIndex,
+        bookCtx,
+        {
+          translatedFlags: translatedParagraphFlags,
+          hasPendingTranslations: hasPending,
+        }
+      );
+
+      prevSyncSignatureRef.current = nextSyncSignature;
+      prevRenderedSentencesRef.current = renderedSentences;
+      prevTranslatedFlagsRef.current = translatedParagraphFlags;
+
+      if (wasPlaying) {
+        void controller.playFromOffset(mapped.chapterOffset);
+      }
+      return;
+    }
+
+    // Incremental batch translation finished another paragraph in current chapter/mode
+    const mapped = mapSentenceCursorAcrossRender(
+      prevSentences,
+      activeSentenceRef.current,
+      renderedParagraphs,
+      renderedSentences
+    );
+    const activeParaIdx = mapped.paragraphIndex;
+    const prevFlags = prevTranslatedFlagsRef.current;
+    const activeParaJustTranslated =
+      controller.getIsPlaying() &&
+      !prevFlags[activeParaIdx] &&
+      Boolean(translatedParagraphFlags[activeParaIdx]);
+
+    activeSentenceRef.current = mapped.sentenceIndex;
+    activeWordRef.current = mapped.wordIndex;
+    activeOffsetRef.current = mapped.chapterOffset;
+    setActiveSentenceIdx(mapped.sentenceIndex);
+    setActiveCharOffset(mapped.chapterOffset);
+
+    prevRenderedSentencesRef.current = renderedSentences;
+    prevTranslatedFlagsRef.current = translatedParagraphFlags;
+
+    if (activeParaJustTranslated) {
+      controller.setBookContext(
+        bookMeta.title,
+        chapTitle,
+        renderedParagraphs,
+        renderedSentences,
+        mapped.chapterOffset,
+        chapterIndex,
+        bookCtx,
+        {
+          translatedFlags: translatedParagraphFlags,
+          hasPendingTranslations: hasPending,
+        }
+      );
+      void controller.playFromOffset(mapped.chapterOffset);
+    } else {
+      controller.updateRenderedContextKeepPlayback(
+        renderedParagraphs,
+        renderedSentences,
+        translatedParagraphFlags,
+        hasPending
+      );
+    }
+  }, [
+    bookCtx,
+    bookMeta.title,
+    chapterIndex,
+    chapters,
+    isTranslatingBatch,
+    readerSettings.geminiModel,
+    readerSettings.paragraphTranslateEnabled,
+    readerSettings.targetLanguage,
+    readerSettings.translationProvider,
+    renderedParagraphs,
+    renderedSentences,
+    translatedParagraphFlags,
+    translationStats.pending,
+  ]);
+
+  // Compute virtual pages dynamically from layout settings & viewport (using original coordinate mapping)
   const virtualPageSummary = useMemo(() => {
     if (chapterCharLengths.length === 0) return null;
     const charsPerPage = estimateCharsPerVirtualPage(
@@ -775,6 +1190,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     return calculateBookVirtualPages(chapterCharLengths, charsPerPage);
   }, [chapterCharLengths, readerSettings, viewportSize.h, viewportSize.w]);
 
+  const activeOriginalOffset = useMemo(
+    () =>
+      mapRenderedOffsetToOriginalOffset(renderedSentences, activeSentenceIdx, paragraphs),
+    [activeSentenceIdx, paragraphs, renderedSentences]
+  );
+
   const virtualLocation = useMemo(() => {
     if (!virtualPageSummary) {
       return {
@@ -784,8 +1205,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         chapterTotalPages: 1,
       };
     }
-    return resolveVirtualPageLocation(virtualPageSummary, chapterIndex, activeCharOffset);
-  }, [activeCharOffset, chapterIndex, chapters.length, virtualPageSummary]);
+    return resolveVirtualPageLocation(virtualPageSummary, chapterIndex, activeOriginalOffset);
+  }, [activeOriginalOffset, chapterIndex, chapters.length, virtualPageSummary]);
 
   const handleSeekVirtualPage = useCallback(
     (targetPage: number) => {
@@ -794,7 +1215,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       if (target.chapterIndex !== chapterIndex) {
         void handleSelectChapter(target.chapterIndex, false, target.charOffset);
       } else {
-        const loc = findLocationAtChapterOffset(allSentences, target.charOffset);
+        const origLoc = findLocationAtChapterOffset(allSentences, target.charOffset);
+        const targetRenderedPara = renderedParagraphs[origLoc.paragraphIndex];
+        const targetOffset = targetRenderedPara?.chapterStartChar ?? 0;
+        const loc = findLocationAtChapterOffset(renderedSentences, targetOffset);
         setActiveSentenceIdx(loc.sentenceIndex);
         activeSentenceRef.current = loc.sentenceIndex;
         activeWordRef.current = loc.wordIndex;
@@ -804,7 +1228,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     },
-    [allSentences, chapterIndex, handleSelectChapter, virtualPageSummary]
+    [allSentences, chapterIndex, handleSelectChapter, renderedParagraphs, renderedSentences, virtualPageSummary]
   );
 
   // Scroll highlighted sentence into view during TTS playback
@@ -813,8 +1237,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     if (isPlaying && el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-    if (readerSettings.readingMode === 'paginated' && paragraphs.length > 0) {
-      const targetParaIdx = allSentences[activeSentenceIdx]?.paragraphIndex ?? 0;
+    if (readerSettings.readingMode === 'paginated' && renderedParagraphs.length > 0) {
+      const targetParaIdx = renderedSentences[activeSentenceIdx]?.paragraphIndex ?? 0;
       const targetPage = Math.floor(targetParaIdx / PARAGRAPHS_PER_PAGE);
       if (targetPage !== pageIndex) {
         setPageIndex(targetPage);
@@ -823,33 +1247,67 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   }, [
     PARAGRAPHS_PER_PAGE,
     activeSentenceIdx,
-    allSentences,
     isPlaying,
     pageIndex,
-    paragraphs.length,
     readerSettings.readingMode,
+    renderedParagraphs.length,
+    renderedSentences,
   ]);
 
-  // Inline paragraph translation batch fetcher
+  // Prioritized inline paragraph translation batch fetcher (starts from current paragraph forward)
   useEffect(() => {
-    if (!readerSettings.paragraphTranslateEnabled || paragraphs.length === 0) return;
+    if (!readerSettings.paragraphTranslateEnabled || paragraphs.length === 0) {
+      setIsTranslatingBatch(false);
+      return;
+    }
 
     let cancelled = false;
+    setIsTranslatingBatch(true);
+
+    const startParaIdx = Math.max(
+      0,
+      Math.min(
+        renderedSentences[activeSentenceRef.current]?.paragraphIndex ?? 0,
+        paragraphs.length - 1
+      )
+    );
+    const orderedParagraphs = [
+      ...paragraphs.slice(startParaIdx),
+      ...paragraphs.slice(0, startParaIdx),
+    ];
+
     async function runBatch() {
-      const modelScope =
-        readerSettings.translationProvider === 'gemini' ? readerSettings.geminiModel : '';
-      for (const para of paragraphs) {
-        if (cancelled) return;
-        const cacheKey = `${para.id}:${readerSettings.targetLanguage}:${readerSettings.translationProvider}:${modelScope}`;
-        if (inlineTranslations[cacheKey]) continue;
-        const res = await translateText(para.rawText, readerSettings.targetLanguage, safeBookLang, {
-          provider: readerSettings.translationProvider,
-          libreTranslateUrl: readerSettings.libreTranslateUrl,
-          geminiApiKey: readerSettings.geminiApiKey,
-          geminiModel: readerSettings.geminiModel,
-        });
-        if (cancelled) return;
-        setInlineTranslations((prev) => ({ ...prev, [cacheKey]: res }));
+      try {
+        for (const para of orderedParagraphs) {
+          if (cancelled) return;
+          const slotKey = buildParagraphTranslationSlotKey(
+            chapterIndex,
+            para.id,
+            para.rawText,
+            readerSettings.targetLanguage,
+            readerSettings.translationProvider,
+            readerSettings.geminiModel
+          );
+          if (inlineTranslations[slotKey]?.ok) continue;
+
+          const res = await translateText(
+            para.rawText,
+            readerSettings.targetLanguage,
+            safeBookLang,
+            {
+              provider: readerSettings.translationProvider,
+              libreTranslateUrl: readerSettings.libreTranslateUrl,
+              geminiApiKey: readerSettings.geminiApiKey,
+              geminiModel: readerSettings.geminiModel,
+            }
+          );
+          if (cancelled) return;
+          setInlineTranslations((prev) => ({ ...prev, [slotKey]: res }));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsTranslatingBatch(false);
+        }
       }
     }
 
@@ -857,8 +1315,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     return () => {
       cancelled = true;
     };
+    // Note: intentionally exclude `inlineTranslations` & `renderedSentences` so we don't restart
+    // the active ordered loop after each single paragraph finishes translating.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    inlineTranslations,
+    chapterIndex,
     paragraphs,
     readerSettings.geminiApiKey,
     readerSettings.geminiModel,
@@ -867,6 +1328,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     readerSettings.targetLanguage,
     readerSettings.translationProvider,
     safeBookLang,
+    translateRetryTick,
   ]);
 
   const triggerTranslationPopup = useCallback(
@@ -900,29 +1362,123 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     void controllerRef.current?.playFromSentence(sentenceIdx);
   };
 
+  const detectTopmostViewportParagraph = useCallback((): number => {
+    const headerEl = document.querySelector('header');
+    const visibleTopEdge = headerEl ? headerEl.getBoundingClientRect().bottom : 0;
+    const bottomBarEl = document.querySelector('[data-reader-bottom-bar]');
+    const visibleBottomEdge = bottomBarEl
+      ? bottomBarEl.getBoundingClientRect().top
+      : window.innerHeight;
+
+    const paraEls = Array.from(
+      document.querySelectorAll('article [data-paragraph-index]')
+    ) as HTMLElement[];
+    const rects = paraEls
+      .map((el) => {
+        const idx = Number(el.dataset.paragraphIndex);
+        const r = el.getBoundingClientRect();
+        return Number.isFinite(idx)
+          ? { paragraphIndex: idx, top: r.top, bottom: r.bottom }
+          : null;
+      })
+      .filter((x): x is ParagraphViewportRect => Boolean(x));
+
+    if (rects.length === 0) {
+      return renderedSentences[activeSentenceRef.current]?.paragraphIndex ?? 0;
+    }
+    return findTopmostVisibleParagraphIndex(rects, visibleTopEdge, visibleBottomEdge);
+  }, [renderedSentences]);
+
   const handleTogglePlay = () => {
     if (!controllerRef.current) return;
     if (isPlaying) {
       controllerRef.current.pause();
-    } else {
-      if (notificationStatus.isNative && !notificationStatus.granted) {
-        void requestAndroidNotificationPermission().then((granted) => {
-          setNotificationStatus((prev) => ({ ...prev, granted }));
-        });
-      }
-      controllerRef.current.resume();
+      return;
     }
+    const topmostPara = detectTopmostViewportParagraph();
+    setLastTtsPosition(getTtsLastPosition(bookMeta.id));
+    setTtsChoiceModal({
+      open: true,
+      startHereParagraphIndex: topmostPara,
+    });
+  };
+
+  const handleConfirmStartHere = () => {
+    if (!controllerRef.current || !ttsChoiceModal) return;
+    const target = resolveStartFromViewportTarget(
+      ttsChoiceModal.startHereParagraphIndex,
+      renderedParagraphs,
+      renderedSentences
+    );
+    setTtsChoiceModal(null);
+
+    if (notificationStatus.isNative && !notificationStatus.granted) {
+      void requestAndroidNotificationPermission().then((granted) => {
+        setNotificationStatus((prev) => ({ ...prev, granted }));
+      });
+    }
+
+    activeSentenceRef.current = target.sentenceIndex;
+    activeWordRef.current = target.wordIndex;
+    activeOffsetRef.current = target.chapterOffset;
+    setActiveSentenceIdx(target.sentenceIndex);
+    setActiveCharOffset(target.chapterOffset);
+    setTtsBarExpanded(true);
+    persistTtsLastSnapshot(target.sentenceIndex, target.wordIndex, true);
+    void controllerRef.current.playFromOffset(target.chapterOffset);
+  };
+
+  const handleConfirmResumePrevious = () => {
+    if (!controllerRef.current) return;
+    const saved = getTtsLastPosition(bookMeta.id) ?? lastTtsPosition;
+    if (!saved) return;
+    setTtsChoiceModal(null);
+
+    if (notificationStatus.isNative && !notificationStatus.granted) {
+      void requestAndroidNotificationPermission().then((granted) => {
+        setNotificationStatus((prev) => ({ ...prev, granted }));
+      });
+    }
+
+    setTtsBarExpanded(true);
+
+    if (saved.chapterIndex !== chapterIndexRef.current) {
+      void handleSelectChapter(saved.chapterIndex, true, saved.originalCharOffset, saved);
+      return;
+    }
+
+    const target = resolveTtsResumeTarget(saved, renderedParagraphs, renderedSentences);
+    activeSentenceRef.current = target.sentenceIndex;
+    activeWordRef.current = target.wordIndex;
+    activeOffsetRef.current = target.chapterOffset;
+    setActiveSentenceIdx(target.sentenceIndex);
+    setActiveCharOffset(target.chapterOffset);
+
+    if (readerSettings.readingMode === 'paginated') {
+      const targetPage = Math.floor(target.paragraphIndex / PARAGRAPHS_PER_PAGE);
+      if (targetPage !== pageIndex) {
+        setPageIndex(targetPage);
+      }
+    }
+
+    persistTtsLastSnapshot(target.sentenceIndex, target.wordIndex, true);
+    void controllerRef.current.playFromOffset(target.chapterOffset);
+    window.requestAnimationFrame(() => {
+      sentenceRefs.current
+        .get(target.sentenceIndex)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   };
 
   const handleAddBookmark = async () => {
-    const currentSent = allSentences[activeSentenceIdx];
+    const currentSent = renderedSentences[activeSentenceIdx];
     const currentChapTitle = chapters[chapterIndex]?.title || `Bab ${chapterIndex + 1}`;
     const item: BookmarkItem = {
       id: `bm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       bookId: bookMeta.id,
       chapterIndex,
       chapterTitle: currentChapTitle,
-      charOffset: activeCharOffset,
+      charOffset: activeOriginalOffset,
       quote: currentSent?.text.slice(0, 140) || currentChapTitle,
       progressPercent: bookMeta.progressPercent,
       createdAt: Date.now(),
@@ -965,7 +1521,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     const sel = (selection?.toString() ?? '').replace(/\u00AD/g, '').trim();
     if (sel.length >= 1 && sel.length <= 800) {
       let sentIdx = activeSentenceIdx;
-      let paraIdx = allSentences[activeSentenceIdx]?.paragraphIndex;
+      let paraIdx = renderedSentences[activeSentenceIdx]?.paragraphIndex;
       let charOffset = activeCharOffset;
 
       const anchorEl =
@@ -977,9 +1533,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
       if (sentEl) {
         const parsedIdx = Number(sentEl.dataset.sentenceIndex);
-        if (Number.isFinite(parsedIdx) && allSentences[parsedIdx]) {
+        if (Number.isFinite(parsedIdx) && renderedSentences[parsedIdx]) {
           sentIdx = parsedIdx;
-          const sent = allSentences[parsedIdx];
+          const sent = renderedSentences[parsedIdx];
           paraIdx = sent.paragraphIndex;
           const posInSent = sent.text.toLowerCase().indexOf(sel.toLowerCase());
           charOffset =
@@ -1032,7 +1588,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     const sentEl = target.closest('[data-sentence-index]') as HTMLElement | null;
     if (sentEl && (ttsBarExpanded || isPlaying)) {
       const idx = Number(sentEl.dataset.sentenceIndex);
-      const sent = allSentences[idx];
+      const sent = renderedSentences[idx];
       if (sent) {
         setSelectionMenu({
           text: sent.text,
@@ -1062,12 +1618,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     return map;
   }, [currentChapterHighlights]);
 
-  const totalPages = Math.max(1, Math.ceil(paragraphs.length / PARAGRAPHS_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil(renderedParagraphs.length / PARAGRAPHS_PER_PAGE));
   const visibleParagraphs = useMemo(() => {
-    if (readerSettings.readingMode === 'scroll') return paragraphs;
+    if (readerSettings.readingMode === 'scroll') return renderedParagraphs;
     const start = pageIndex * PARAGRAPHS_PER_PAGE;
-    return paragraphs.slice(start, start + PARAGRAPHS_PER_PAGE);
-  }, [PARAGRAPHS_PER_PAGE, pageIndex, paragraphs, readerSettings.readingMode]);
+    return renderedParagraphs.slice(start, start + PARAGRAPHS_PER_PAGE);
+  }, [PARAGRAPHS_PER_PAGE, pageIndex, readerSettings.readingMode, renderedParagraphs]);
 
   const pageAnimClass =
     readerSettings.pageAnimation === 'horizontal'
@@ -1106,16 +1662,16 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
   const currentChapterTitle = displayedChapters[chapterIndex]?.title || `Bab ${chapterIndex + 1}`;
   const chapterProgressPct =
-    allSentences.length > 0
-      ? Math.round(((activeSentenceIdx + 1) / allSentences.length) * 100)
+    renderedSentences.length > 0
+      ? Math.round(((activeSentenceIdx + 1) / renderedSentences.length) * 100)
       : 0;
 
   const isHyphenationActive =
     readerSettings.textAlign === 'justify' || readerSettings.textAlign === 'original-hyphen';
   const useIndonesianHyphenator =
     isHyphenationActive &&
-    (safeBookLang.toLowerCase().startsWith('id') ||
-      safeBookLang.toLowerCase().startsWith('ms'));
+    (renderedLocale.toLowerCase().startsWith('id') ||
+      renderedLocale.toLowerCase().startsWith('ms'));
 
   const textAlignStyle: React.CSSProperties['textAlign'] =
     readerSettings.textAlign === 'left'
@@ -1153,7 +1709,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
       {/* Toast Feedback */}
       {toastMessage && (
-        <div className="pointer-events-none fixed top-24 left-1/2 z-50 -translate-x-1/2 rounded-[6px] border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] px-4 py-2 text-xs font-semibold text-[var(--nv-text)] shadow-xl whitespace-nowrap">
+        <div className="pointer-events-none fixed top-[122px] left-1/2 z-50 -translate-x-1/2 rounded-[6px] border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] px-4 py-2 text-xs font-semibold text-[var(--nv-text)] shadow-xl whitespace-nowrap">
           {toastMessage}
         </div>
       )}
@@ -1201,6 +1757,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  if (controllerRef.current?.getIsPlaying() || wasTtsPlayingRef.current) {
+                    const pos = controllerRef.current?.getPosition();
+                    if (pos) {
+                      persistTtsLastSnapshot(pos.sentenceIndex, pos.wordIndex, true);
+                    }
+                  }
                   controllerRef.current?.pause();
                   void persistPosition(
                     chapterIndexRef.current,
@@ -1228,7 +1790,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   }}
                   aria-label="Tampilkan atau tutup kontrol TTS"
                   title="Baca Suara (TTS)"
-                  className={`inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg ${
+                  className={`inline-flex min-h-[40px] min-w-[36px] sm:min-w-[40px] items-center justify-center rounded-lg ${
                     isPlaying || ttsBarExpanded
                       ? 'bg-white/15 text-[var(--nv-ui-bar-highlight)]'
                       : 'text-[var(--nv-teal-text)] hover:bg-white/10'
@@ -1239,10 +1801,41 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
                 <button
                   type="button"
+                  onClick={() => {
+                    const nextEnabled = !readerSettings.paragraphTranslateEnabled;
+                    onUpdateReaderSettings({ paragraphTranslateEnabled: nextEnabled });
+                    showToast(
+                      nextEnabled
+                        ? `Terjemahan aktif (${readerSettings.targetLanguage.toUpperCase()})`
+                        : 'Teks asli dipulihkan'
+                    );
+                  }}
+                  aria-pressed={readerSettings.paragraphTranslateEnabled}
+                  aria-label={
+                    readerSettings.paragraphTranslateEnabled
+                      ? 'Matikan terjemahan halaman'
+                      : 'Terjemahkan halaman'
+                  }
+                  title={
+                    readerSettings.paragraphTranslateEnabled
+                      ? 'Matikan Terjemahan (Kembalikan Teks Asli)'
+                      : 'Terjemahkan Halaman'
+                  }
+                  className={`inline-flex min-h-[40px] min-w-[36px] sm:min-w-[40px] items-center justify-center rounded-lg ${
+                    readerSettings.paragraphTranslateEnabled
+                      ? 'bg-white/15 text-[var(--nv-ui-bar-highlight)]'
+                      : 'text-[var(--nv-teal-text)] hover:bg-white/10'
+                  }`}
+                >
+                  <Languages className="h-5 w-5" aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setSearchOpen(true)}
                   aria-label="Cari dalam buku"
                   title="Cari"
-                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
+                  className="inline-flex min-h-[40px] min-w-[36px] sm:min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
                 </button>
@@ -1252,7 +1845,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   onClick={() => setTocOpen(true)}
                   aria-label="Buka Daftar Isi, Penanda, dan Kutipan"
                   title="Daftar Isi"
-                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
+                  className="inline-flex min-h-[40px] min-w-[36px] sm:min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
                 >
                   <List className="h-5 w-5" aria-hidden="true" />
                 </button>
@@ -1262,7 +1855,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   onClick={() => setAppearanceOpen(true)}
                   aria-label="Buka Setelan Tampilan"
                   title="Setelan Tampilan"
-                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
+                  className="inline-flex min-h-[40px] min-w-[36px] sm:min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
                 >
                   <Settings className="h-5 w-5" aria-hidden="true" />
                 </button>
@@ -1271,7 +1864,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   type="button"
                   onClick={() => setMenuOpen((v) => !v)}
                   aria-label="Menu lainnya"
-                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
+                  className="inline-flex min-h-[40px] min-w-[36px] sm:min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
                 >
                   <MoreVertical className="h-5 w-5" aria-hidden="true" />
                 </button>
@@ -1293,17 +1886,21 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                       type="button"
                       onClick={() => {
                         setMenuOpen(false);
-                        onUpdateReaderSettings({
-                          paragraphTranslateEnabled: !readerSettings.paragraphTranslateEnabled,
-                        });
+                        const nextEnabled = !readerSettings.paragraphTranslateEnabled;
+                        onUpdateReaderSettings({ paragraphTranslateEnabled: nextEnabled });
+                        showToast(
+                          nextEnabled
+                            ? `Terjemahan aktif (${readerSettings.targetLanguage.toUpperCase()})`
+                            : 'Teks asli dipulihkan'
+                        );
                       }}
                       className="flex min-h-[42px] w-full items-center gap-2.5 rounded px-3 text-left text-xs font-medium hover:bg-white/10"
                     >
                       <Languages className="h-4 w-4 text-[var(--nv-cyan)]" />
                       <span>
                         {readerSettings.paragraphTranslateEnabled
-                          ? 'Matikan Terjemahan Paragraf'
-                          : 'Aktifkan Terjemahan Paragraf'}
+                          ? 'Matikan Terjemahan (Teks Asli)'
+                          : 'Terjemahkan Halaman'}
                       </span>
                     </button>
                     <button
@@ -1465,132 +2062,153 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             {loadError}
           </div>
         ) : (
-          <article
-            key={`${chapterIndex}-${pageIndex}`}
-            lang={safeBookLang}
-            className={`${fontClass} ${pageAnimClass} ${isHyphenationActive ? 'nv-hyphen-auto' : ''} ${
-              readerSettings.twoPageSpread && viewportSize.w >= 768
-                ? `columns-2 gap-10 ${
-                    readerSettings.pageGapBorder
-                      ? '[column-rule:1px_solid_var(--nv-border)]'
-                      : ''
-                  }`
-                : ''
-            }`}
-            style={{
-              fontFamily: customFontFamily ? `"${customFontFamily}", serif` : undefined,
-              fontSize: `${readerSettings.fontSize}px`,
-              fontWeight: readerSettings.fontWeight,
-              lineHeight: readerSettings.lineHeight,
-              textAlign: textAlignStyle,
-            }}
-          >
-            {visibleParagraphs.map((para) => {
-              const modelScope =
-                readerSettings.translationProvider === 'gemini' ? readerSettings.geminiModel : '';
-              const inlineKey = `${para.id}:${readerSettings.targetLanguage}:${readerSettings.translationProvider}:${modelScope}`;
-              const inlineRes = inlineTranslations[inlineKey];
-
-              const Tag =
-                para.tag === 'h1'
-                  ? 'h1'
-                  : para.tag === 'h2'
-                    ? 'h2'
-                    : para.tag === 'h3'
-                      ? 'h3'
-                      : para.tag === 'blockquote'
-                        ? 'blockquote'
-                        : 'p';
-
-              const tagStyle =
-                para.tag === 'h1'
-                  ? 'mb-6 text-center text-2xl font-bold leading-tight tracking-tight sm:text-3xl'
-                  : para.tag === 'h2'
-                    ? 'mb-4 mt-7 text-left text-xl font-bold leading-snug'
-                    : para.tag === 'h3'
-                      ? 'mb-3 mt-5 text-left text-lg font-semibold'
-                      : para.tag === 'blockquote'
-                        ? 'my-4 border-l-2 border-[var(--nv-gold)]/60 pl-4 italic text-[var(--nv-muted)]'
-                        : 'indent-6';
-
-              return (
+          <>
+            {readerSettings.paragraphTranslateEnabled &&
+              (isTranslatingBatch || translationStats.errorMessage) && (
                 <div
-                  key={para.id}
-                  data-paragraph-index={para.index}
-                  style={{ marginBottom: `${readerSettings.paragraphSpacingPx}px` }}
-                  className={para.isFootnote ? 'text-[0.88em] text-[var(--nv-muted)]' : ''}
+                  role="status"
+                  className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 py-2 text-xs text-[var(--nv-muted)]"
                 >
-                  <Tag className={tagStyle}>
-                    {para.sentences.map((sentence) => {
-                      const isCurrentSentence =
-                        (isPlaying || ttsBarExpanded) && sentence.globalIndex === activeSentenceIdx;
-                      const hlColor = sentenceHighlightMap.get(sentence.globalIndex);
-                      const hlClass = hlColor ? HIGHLIGHT_BG_MAP[hlColor] : '';
-
-                      return (
-                        <React.Fragment key={sentence.globalIndex}>
-                          <span
-                            ref={(node) => {
-                              if (node) sentenceRefs.current.set(sentence.globalIndex, node);
-                              else sentenceRefs.current.delete(sentence.globalIndex);
-                            }}
-                            data-sentence-index={sentence.globalIndex}
-                            onPointerDown={() => handleSentenceLongPressStart(sentence)}
-                            onPointerUp={handleSentenceLongPressEnd}
-                            onPointerCancel={handleSentenceLongPressEnd}
-                            onDoubleClick={(ev) => {
-                              ev.stopPropagation();
-                              setSelectionMenu({
-                                text: sentence.text,
-                                sentenceIndex: sentence.globalIndex,
-                                charOffset: sentence.chapterStartChar,
-                              });
-                            }}
-                            className={`rounded-xs transition-colors duration-150 ${
-                              isCurrentSentence ? 'tts-sentence-active' : hlClass
-                            }`}
-                          >
-                            {sentence.words.map((word, wIdx) => {
-                              const fmt = getWordFormat(word, para.inlineFormats);
-                              const displayWord = useIndonesianHyphenator
-                                ? applyIndonesianHyphenation(word.text)
-                                : word.text;
-                              const formatClass = `${fmt.italic ? 'italic' : ''} ${
-                                fmt.bold ? 'font-bold' : ''
-                              }`.trim();
-
-                              return (
-                                <React.Fragment key={word.wordIndex}>
-                                  {formatClass ? (
-                                    <span className={formatClass}>{displayWord}</span>
-                                  ) : (
-                                    displayWord
-                                  )}
-                                  {wIdx < sentence.words.length - 1 ? ' ' : ''}
-                                </React.Fragment>
-                              );
-                            })}
-                          </span>{' '}
-                        </React.Fragment>
-                      );
-                    })}
-                  </Tag>
-
-                  {readerSettings.paragraphTranslateEnabled && (
-                    <div className="mt-1.5 border-t border-[var(--nv-border)] pt-1.5 font-sans text-sm italic leading-relaxed text-[var(--nv-muted)]">
-                      {!inlineRes ? (
-                        <span>Menerjemahkan paragraf...</span>
-                      ) : inlineRes.ok ? (
-                        <span>{inlineRes.translatedText}</span>
-                      ) : (
-                        <span className="text-amber-700 dark:text-amber-300">{inlineRes.error}</span>
-                      )}
-                    </div>
-                  )}
+                  <span>
+                    {isTranslatingBatch
+                      ? `Menerjemahkan konten (${translationStats.translated}/${translationStats.total} paragraf)...`
+                      : translationStats.errorMessage}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {!isTranslatingBatch && translationStats.errorMessage && (
+                      <button
+                        type="button"
+                        onClick={() => setTranslateRetryTick((t) => t + 1)}
+                        className="font-semibold text-[var(--nv-cyan)] hover:underline"
+                      >
+                        Coba lagi
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateReaderSettings({ paragraphTranslateEnabled: false })
+                      }
+                      className="font-semibold text-[var(--nv-text)] hover:underline"
+                    >
+                      Teks Asli
+                    </button>
+                  </div>
                 </div>
-              );
-            })}
-          </article>
+              )}
+
+            <article
+              key={`${chapterIndex}-${pageIndex}`}
+              lang={renderedLocale}
+              data-translated-mode={readerSettings.paragraphTranslateEnabled ? 'on' : 'off'}
+              className={`${fontClass} ${pageAnimClass} ${isHyphenationActive ? 'nv-hyphen-auto' : ''} ${
+                readerSettings.twoPageSpread && viewportSize.w >= 768
+                  ? `columns-2 gap-10 ${
+                      readerSettings.pageGapBorder
+                        ? '[column-rule:1px_solid_var(--nv-border)]'
+                        : ''
+                    }`
+                  : ''
+              }`}
+              style={{
+                fontFamily: customFontFamily ? `"${customFontFamily}", serif` : undefined,
+                fontSize: `${readerSettings.fontSize}px`,
+                fontWeight: readerSettings.fontWeight,
+                lineHeight: readerSettings.lineHeight,
+                textAlign: textAlignStyle,
+              }}
+            >
+              {visibleParagraphs.map((para) => {
+                const Tag =
+                  para.tag === 'h1'
+                    ? 'h1'
+                    : para.tag === 'h2'
+                      ? 'h2'
+                      : para.tag === 'h3'
+                        ? 'h3'
+                        : para.tag === 'blockquote'
+                          ? 'blockquote'
+                          : 'p';
+
+                const tagStyle =
+                  para.tag === 'h1'
+                    ? 'mb-6 text-center text-2xl font-bold leading-tight tracking-tight sm:text-3xl'
+                    : para.tag === 'h2'
+                      ? 'mb-4 mt-7 text-left text-xl font-bold leading-snug'
+                      : para.tag === 'h3'
+                        ? 'mb-3 mt-5 text-left text-lg font-semibold'
+                        : para.tag === 'blockquote'
+                          ? 'my-4 border-l-2 border-[var(--nv-gold)]/60 pl-4 italic text-[var(--nv-muted)]'
+                          : 'indent-6';
+
+                return (
+                  <div
+                    key={para.id}
+                    data-paragraph-index={para.index}
+                    data-translated={translatedParagraphFlags[para.index] ? 'true' : 'false'}
+                    style={{ marginBottom: `${readerSettings.paragraphSpacingPx}px` }}
+                    className={para.isFootnote ? 'text-[0.88em] text-[var(--nv-muted)]' : ''}
+                  >
+                    <Tag className={tagStyle}>
+                      {para.sentences.map((sentence) => {
+                        const isCurrentSentence =
+                          (isPlaying || ttsBarExpanded) && sentence.globalIndex === activeSentenceIdx;
+                        const hlColor = sentenceHighlightMap.get(sentence.globalIndex);
+                        const hlClass = hlColor ? HIGHLIGHT_BG_MAP[hlColor] : '';
+
+                        return (
+                          <React.Fragment key={sentence.globalIndex}>
+                            <span
+                              ref={(node) => {
+                                if (node) sentenceRefs.current.set(sentence.globalIndex, node);
+                                else sentenceRefs.current.delete(sentence.globalIndex);
+                              }}
+                              data-sentence-index={sentence.globalIndex}
+                              onPointerDown={() => handleSentenceLongPressStart(sentence)}
+                              onPointerUp={handleSentenceLongPressEnd}
+                              onPointerCancel={handleSentenceLongPressEnd}
+                              onDoubleClick={(ev) => {
+                                ev.stopPropagation();
+                                setSelectionMenu({
+                                  text: sentence.text,
+                                  sentenceIndex: sentence.globalIndex,
+                                  charOffset: sentence.chapterStartChar,
+                                });
+                              }}
+                              className={`rounded-xs transition-colors duration-150 ${
+                                isCurrentSentence ? 'tts-sentence-active' : hlClass
+                              }`}
+                            >
+                              {sentence.words.map((word, wIdx) => {
+                                const fmt = getWordFormat(word, para.inlineFormats);
+                                const displayWord = useIndonesianHyphenator
+                                  ? applyIndonesianHyphenation(word.text)
+                                  : word.text;
+                                const formatClass = `${fmt.italic ? 'italic' : ''} ${
+                                  fmt.bold ? 'font-bold' : ''
+                                }`.trim();
+
+                                return (
+                                  <React.Fragment key={word.wordIndex}>
+                                    {formatClass ? (
+                                      <span className={formatClass}>{displayWord}</span>
+                                    ) : (
+                                      displayWord
+                                    )}
+                                    {wIdx < sentence.words.length - 1 ? ' ' : ''}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </span>{' '}
+                          </React.Fragment>
+                        );
+                      })}
+                    </Tag>
+                  </div>
+                );
+              })}
+            </article>
+          </>
         )}
 
         {/* Paginated or Chapter Navigation Footer */}
@@ -1858,7 +2476,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         ttsBarExpanded={ttsBarExpanded}
         isPlaying={isPlaying}
         currentSentenceIndex={activeSentenceIdx}
-        totalSentences={allSentences.length}
+        totalSentences={renderedSentences.length}
         bookVirtualPage={virtualLocation.bookVirtualPage}
         totalVirtualPages={virtualLocation.totalVirtualPages}
         chapterProgressPercent={chapterProgressPct}
@@ -2194,6 +2812,27 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           return { appliedCount: res.appliedCount, skippedCount: res.skippedCount };
         }}
         onClose={() => setRulesModalOpen(false)}
+      />
+
+      {/* TTS Starting Position Choice Modal */}
+      <TtsStartChoiceModal
+        open={Boolean(ttsChoiceModal?.open)}
+        startHereLabel={
+          ttsChoiceModal
+            ? `${currentChapterTitle} · Paragraf ${ttsChoiceModal.startHereParagraphIndex + 1}`
+            : ''
+        }
+        startHerePreview={
+          ttsChoiceModal
+            ? (renderedParagraphs[ttsChoiceModal.startHereParagraphIndex]?.rawText || '')
+                .replace(/\u00AD/g, '')
+                .trim()
+            : ''
+        }
+        lastTtsPosition={lastTtsPosition}
+        onStartFromHere={handleConfirmStartHere}
+        onResumePrevious={handleConfirmResumePrevious}
+        onClose={() => setTtsChoiceModal(null)}
       />
     </div>
   );

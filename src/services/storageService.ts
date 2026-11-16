@@ -8,6 +8,7 @@ import type {
   ReaderSettings,
   ReadingPosition,
   TextReplaceRule,
+  TtsLastPosition,
   TtsSettings,
 } from '../types/reader';
 import { DEFAULT_FIND_REPLACE_SETTINGS } from '../utils/textReplace';
@@ -71,6 +72,7 @@ const TTS_SETTINGS_KEY = 'novelvoice_tts_settings_v2';
 const LEGACY_TTS_SETTINGS_KEY = 'novelvoice_tts_settings_v1';
 const PRESETS_KEY = 'novelvoice_reader_presets_v1';
 const SEEDED_FLAG_KEY = 'novelvoice_samples_seeded_v1';
+const TTS_LAST_POSITIONS_KEY = 'novelvoice_tts_last_positions_v1';
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   theme: 'twilight',
@@ -217,6 +219,7 @@ export async function deleteBook(bookId: string): Promise<void> {
   for (const b of bms) await tx.objectStore('bookmarks').delete(b.id);
   for (const h of hls) await tx.objectStore('highlights').delete(h.id);
   await tx.done;
+  clearTtsLastPosition(bookId);
 }
 
 export async function getReadingPosition(bookId: string): Promise<ReadingPosition | undefined> {
@@ -227,6 +230,46 @@ export async function getReadingPosition(bookId: string): Promise<ReadingPositio
 export async function saveReadingPosition(position: ReadingPosition): Promise<void> {
   const db = await getDb();
   await db.put('positions', position);
+}
+
+function loadAllTtsLastPositions(): Record<string, TtsLastPosition> {
+  try {
+    const raw = localStorage.getItem(TTS_LAST_POSITIONS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, TtsLastPosition>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function getTtsLastPosition(bookId: string): TtsLastPosition | null {
+  if (!bookId) return null;
+  const all = loadAllTtsLastPositions();
+  return all[bookId] ?? null;
+}
+
+export function saveTtsLastPosition(pos: TtsLastPosition): void {
+  if (!pos.bookId) return;
+  try {
+    const all = loadAllTtsLastPositions();
+    all[pos.bookId] = pos;
+    localStorage.setItem(TTS_LAST_POSITIONS_KEY, JSON.stringify(all));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function clearTtsLastPosition(bookId: string): void {
+  if (!bookId) return;
+  try {
+    const all = loadAllTtsLastPositions();
+    if (!(bookId in all)) return;
+    delete all[bookId];
+    localStorage.setItem(TTS_LAST_POSITIONS_KEY, JSON.stringify(all));
+  } catch {
+    // Ignore
+  }
 }
 
 // Bookmarks
@@ -538,6 +581,7 @@ export interface NovelVoiceBackupPayload {
   bookmarks: BookmarkItem[];
   highlights: HighlightItem[];
   textReplaceRules?: TextReplaceRule[];
+  ttsLastPositions?: TtsLastPosition[];
 }
 
 export async function exportBackupJson(): Promise<string> {
@@ -566,6 +610,7 @@ export async function exportBackupJson(): Promise<string> {
     bookmarks,
     highlights,
     textReplaceRules,
+    ttsLastPositions: Object.values(loadAllTtsLastPositions()),
   };
   return JSON.stringify(payload, null, 2);
 }
@@ -684,5 +729,17 @@ export async function importBackupJson(rawJson: string): Promise<{
   }
 
   await tx.done;
+
+  if (Array.isArray(parsed.ttsLastPositions)) {
+    for (const ttsPos of parsed.ttsLastPositions) {
+      if (ttsPos && ttsPos.bookId) {
+        saveTtsLastPosition({
+          ...ttsPos,
+          bookId: resolveBookId(ttsPos.bookId),
+        });
+      }
+    }
+  }
+
   return { restoredPositions, restoredBookmarks, restoredHighlights, restoredRules };
 }

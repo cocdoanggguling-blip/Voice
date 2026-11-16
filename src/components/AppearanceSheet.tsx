@@ -452,9 +452,9 @@ export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
 
               <div className="flex items-center justify-between gap-4 rounded-[4px] bg-[var(--nv-sheet-card)] px-3.5 py-2.5">
                 <div>
-                  <p className="text-xs font-semibold">Terjemahkan Paragraf</p>
+                  <p className="text-xs font-semibold">Mode Terjemahan Halaman</p>
                   <p className="text-[11px] text-[var(--nv-muted)]">
-                    Tampilkan terjemahan di bawah teks asli saat online
+                    Gantikan teks asli dengan hasil terjemahan &amp; dibacakan TTS
                   </p>
                 </div>
                 <GoldSwitch
