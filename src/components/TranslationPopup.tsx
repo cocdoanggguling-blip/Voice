@@ -35,16 +35,24 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
       className="fixed bottom-28 left-1/2 z-40 w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] p-4 text-[var(--nv-text)] shadow-2xl"
     >
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-xs font-semibold text-[var(--nv-muted)]">
-          <Languages className="h-4 w-4 text-[var(--nv-cyan)]" aria-hidden="true" />
-          <span>Terjemahan</span>
+        <div className="flex min-w-0 flex-col">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--nv-text)]">
+            <Languages className="h-4 w-4 shrink-0 text-[var(--nv-cyan)]" aria-hidden="true" />
+            <span className="whitespace-nowrap">Terjemahan</span>
+          </div>
           {result?.provider && (
-            <span>· {result.provider === 'libretranslate' ? 'LibreTranslate' : 'MyMemory'}</span>
+            <span className="mt-0.5 truncate text-[11px] font-medium text-[var(--nv-muted)]">
+              {result.provider === 'gemini'
+                ? `Gemini · ${result.model || 'AI'}`
+                : result.provider === 'libretranslate'
+                  ? 'LibreTranslate'
+                  : 'MyMemory'}
+              {result.fromCache ? ' · Cache' : ''}
+            </span>
           )}
-          {result?.fromCache && <span>· Cache</span>}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <select
             aria-label="Pilih bahasa tujuan terjemahan"
             value={targetLang}

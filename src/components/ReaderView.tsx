@@ -836,13 +836,17 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
     let cancelled = false;
     async function runBatch() {
+      const modelScope =
+        readerSettings.translationProvider === 'gemini' ? readerSettings.geminiModel : '';
       for (const para of paragraphs) {
         if (cancelled) return;
-        const cacheKey = `${para.id}:${readerSettings.targetLanguage}:${readerSettings.translationProvider}`;
+        const cacheKey = `${para.id}:${readerSettings.targetLanguage}:${readerSettings.translationProvider}:${modelScope}`;
         if (inlineTranslations[cacheKey]) continue;
         const res = await translateText(para.rawText, readerSettings.targetLanguage, safeBookLang, {
           provider: readerSettings.translationProvider,
           libreTranslateUrl: readerSettings.libreTranslateUrl,
+          geminiApiKey: readerSettings.geminiApiKey,
+          geminiModel: readerSettings.geminiModel,
         });
         if (cancelled) return;
         setInlineTranslations((prev) => ({ ...prev, [cacheKey]: res }));
@@ -856,6 +860,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   }, [
     inlineTranslations,
     paragraphs,
+    readerSettings.geminiApiKey,
+    readerSettings.geminiModel,
     readerSettings.libreTranslateUrl,
     readerSettings.paragraphTranslateEnabled,
     readerSettings.targetLanguage,
@@ -872,11 +878,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       const res = await translateText(text, targetLang, safeBookLang, {
         provider: readerSettings.translationProvider,
         libreTranslateUrl: readerSettings.libreTranslateUrl,
+        geminiApiKey: readerSettings.geminiApiKey,
+        geminiModel: readerSettings.geminiModel,
       });
       setPopupResult(res);
       setPopupLoading(false);
     },
     [
+      readerSettings.geminiApiKey,
+      readerSettings.geminiModel,
       readerSettings.libreTranslateUrl,
       readerSettings.targetLanguage,
       readerSettings.translationProvider,
@@ -1476,7 +1486,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             }}
           >
             {visibleParagraphs.map((para) => {
-              const inlineKey = `${para.id}:${readerSettings.targetLanguage}:${readerSettings.translationProvider}`;
+              const modelScope =
+                readerSettings.translationProvider === 'gemini' ? readerSettings.geminiModel : '';
+              const inlineKey = `${para.id}:${readerSettings.targetLanguage}:${readerSettings.translationProvider}:${modelScope}`;
               const inlineRes = inlineTranslations[inlineKey];
 
               const Tag =

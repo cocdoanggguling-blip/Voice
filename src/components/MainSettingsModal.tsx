@@ -18,13 +18,11 @@ import type {
   ReaderSettings,
   ReaderTheme,
   ReplaceScope,
-  TargetLanguageCode,
-  TranslationProvider,
   TtsSettings,
 } from '../types/reader';
-import { TARGET_LANGUAGES } from '../services/translationService';
 import { DEFAULT_FIND_REPLACE_SETTINGS, SCOPE_LABELS } from '../utils/textReplace';
 import { DEFAULT_UI_COLOR } from '../utils/uiTheme';
+import { GeminiTranslationConfig } from './GeminiTranslationConfig';
 import { UiColorCustomizer } from './UiColorCustomizer';
 
 interface MainSettingsModalProps {
@@ -278,63 +276,12 @@ export const MainSettingsModal: React.FC<MainSettingsModalProps> = ({
               </h3>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-[var(--nv-chrome-muted)]">
-                  Bahasa Tujuan
-                </span>
-                <select
-                  aria-label="Bahasa tujuan terjemahan"
-                  value={readerSettings.targetLanguage}
-                  onChange={(e) =>
-                    onUpdateReaderSettings({
-                      targetLanguage: e.target.value as TargetLanguageCode,
-                    })
-                  }
-                  className="min-h-[40px] w-full rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-bg)] px-3 text-xs text-[var(--nv-chrome-text)]"
-                >
-                  {TARGET_LANGUAGES.map((lang) => (
-                    <option key={lang.code} value={lang.code}>
-                      {lang.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-[var(--nv-chrome-muted)]">
-                  Penyedia Terjemahan
-                </span>
-                <select
-                  aria-label="Penyedia terjemahan"
-                  value={readerSettings.translationProvider}
-                  onChange={(e) =>
-                    onUpdateReaderSettings({
-                      translationProvider: e.target.value as TranslationProvider,
-                    })
-                  }
-                  className="min-h-[40px] w-full rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-bg)] px-3 text-xs text-[var(--nv-chrome-text)]"
-                >
-                  <option value="mymemory">MyMemory (Gratis Tanpa Key)</option>
-                  <option value="libretranslate">LibreTranslate</option>
-                </select>
-              </label>
-            </div>
-
-            {readerSettings.translationProvider === 'libretranslate' && (
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-[var(--nv-chrome-muted)]">
-                  Endpoint LibreTranslate
-                </span>
-                <input
-                  type="url"
-                  value={readerSettings.libreTranslateUrl}
-                  onChange={(e) => onUpdateReaderSettings({ libreTranslateUrl: e.target.value })}
-                  placeholder="https://libretranslate.com/translate"
-                  className="min-h-[40px] w-full rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-bg)] px-3 text-xs text-[var(--nv-chrome-text)]"
-                />
-              </label>
-            )}
+            <GeminiTranslationConfig
+              settings={readerSettings}
+              onUpdate={onUpdateReaderSettings}
+              surface="chrome"
+              idPrefix="main-trans"
+            />
 
             <div className="flex items-center justify-between gap-3 rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-bg)] px-3.5 py-2.5">
               <div>

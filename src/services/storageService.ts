@@ -11,6 +11,7 @@ import type {
   TtsSettings,
 } from '../types/reader';
 import { DEFAULT_FIND_REPLACE_SETTINGS } from '../utils/textReplace';
+import { DEFAULT_GEMINI_MODEL, normalizeGeminiModelId } from '../utils/geminiTranslation';
 import { DEFAULT_UI_COLOR, normalizeHexColor } from '../utils/uiTheme';
 
 interface NovelVoiceDB extends DBSchema {
@@ -99,6 +100,8 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   paragraphTranslateEnabled: false,
   translationProvider: 'mymemory',
   libreTranslateUrl: 'https://libretranslate.com/translate',
+  geminiApiKey: '',
+  geminiModel: DEFAULT_GEMINI_MODEL,
   findReplaceDefaults: DEFAULT_FIND_REPLACE_SETTINGS,
 };
 
@@ -436,6 +439,8 @@ export function loadReaderSettings(): ReaderSettings {
       ...DEFAULT_READER_SETTINGS,
       ...parsed,
       uiColor: normalizeHexColor(parsed.uiColor, DEFAULT_UI_COLOR),
+      geminiApiKey: typeof parsed.geminiApiKey === 'string' ? parsed.geminiApiKey : '',
+      geminiModel: normalizeGeminiModelId(parsed.geminiModel),
       lineHeightPercent,
       lineHeight: lineHeightPercent / 100,
       margins: {
@@ -544,11 +549,16 @@ export async function exportBackupJson(): Promise<string> {
     db.getAll('highlights'),
     db.getAll('textReplaceRules'),
   ]);
+  const readerSettingsForBackup: ReaderSettings = {
+    ...loadReaderSettings(),
+    // Never leak personal Gemini API key into portable JSON backup files
+    geminiApiKey: '',
+  };
   const payload: NovelVoiceBackupPayload = {
     app: 'NovelVoice',
     version: 2,
     exportedAt: Date.now(),
-    readerSettings: loadReaderSettings(),
+    readerSettings: readerSettingsForBackup,
     ttsSettings: loadTtsSettings(),
     presets: loadReaderPresets(),
     booksMeta,
@@ -572,7 +582,17 @@ export async function importBackupJson(rawJson: string): Promise<{
   }
 
   if (parsed.readerSettings) {
-    saveReaderSettings({ ...DEFAULT_READER_SETTINGS, ...parsed.readerSettings });
+    const currentLocal = loadReaderSettings();
+    saveReaderSettings({
+      ...DEFAULT_READER_SETTINGS,
+      ...parsed.readerSettings,
+      geminiApiKey:
+        typeof parsed.readerSettings.geminiApiKey === 'string' &&
+        parsed.readerSettings.geminiApiKey.trim()
+          ? parsed.readerSettings.geminiApiKey
+          : currentLocal.geminiApiKey,
+      geminiModel: normalizeGeminiModelId(parsed.readerSettings.geminiModel),
+    });
   }
   if (parsed.ttsSettings) {
     saveTtsSettings({ ...DEFAULT_TTS_SETTINGS, ...parsed.ttsSettings });

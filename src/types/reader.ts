@@ -19,7 +19,7 @@ export type PageAnimationMode = 'horizontal' | 'vertical' | 'fade' | 'none';
 export type TextAlignMode = 'original' | 'left' | 'justify' | 'original-hyphen';
 export type OrientationLockMode = 'auto' | 'portrait' | 'landscape';
 export type TtsReadingMode = 'flowing' | 'sentence';
-export type TranslationProvider = 'mymemory' | 'libretranslate';
+export type TranslationProvider = 'mymemory' | 'libretranslate' | 'gemini';
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
 
 export type TargetLanguageCode = 'id' | 'en' | 'ms' | 'jv' | 'ar' | 'ja' | 'zh-CN';
@@ -122,6 +122,8 @@ export interface ReaderSettings {
   paragraphTranslateEnabled: boolean;
   translationProvider: TranslationProvider;
   libreTranslateUrl: string;
+  geminiApiKey: string;
+  geminiModel: string;
   findReplaceDefaults?: FindReplaceDefaultSettings;
 }
 
@@ -278,6 +280,7 @@ export interface TranslationResult {
   targetLang: string;
   fromCache: boolean;
   provider?: TranslationProvider;
+  model?: string;
   error?: string;
 }
 

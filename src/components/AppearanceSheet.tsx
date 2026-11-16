@@ -8,8 +8,8 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { TARGET_LANGUAGES } from '../services/translationService';
 import { DEFAULT_UI_COLOR } from '../utils/uiTheme';
+import { GeminiTranslationConfig } from './GeminiTranslationConfig';
 import { UiColorCustomizer } from './UiColorCustomizer';
 import type {
   CustomFontRecord,
@@ -20,9 +20,7 @@ import type {
   ReaderSettings,
   ReaderTheme,
   ReadingMode,
-  TargetLanguageCode,
   TextAlignMode,
-  TranslationProvider,
 } from '../types/reader';
 
 interface AppearanceSheetProps {
@@ -445,57 +443,12 @@ export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
             {/* Terjemahan Langsung */}
             <div className="space-y-3 border-t border-[var(--nv-border)] pt-4">
               <p className="text-xs font-semibold text-[var(--nv-muted)]">Terjemahan Langsung</p>
-              <div className="flex items-center justify-between gap-4">
-                <label htmlFor="target-lang-select" className="text-xs font-medium">
-                  Bahasa Tujuan
-                </label>
-                <select
-                  id="target-lang-select"
-                  value={settings.targetLanguage}
-                  onChange={(e) =>
-                    onUpdate({ targetLanguage: e.target.value as TargetLanguageCode })
-                  }
-                  className="min-h-[38px] rounded-[4px] border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 text-xs"
-                >
-                  {TARGET_LANGUAGES.map((lang) => (
-                    <option key={lang.code} value={lang.code}>
-                      {lang.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center justify-between gap-4">
-                <label htmlFor="provider-select" className="text-xs font-medium">
-                  Penyedia Terjemahan
-                </label>
-                <select
-                  id="provider-select"
-                  value={settings.translationProvider}
-                  onChange={(e) =>
-                    onUpdate({ translationProvider: e.target.value as TranslationProvider })
-                  }
-                  className="min-h-[38px] rounded-[4px] border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 text-xs"
-                >
-                  <option value="mymemory">MyMemory (Gratis Tanpa Key)</option>
-                  <option value="libretranslate">LibreTranslate</option>
-                </select>
-              </div>
-
-              {settings.translationProvider === 'libretranslate' && (
-                <div>
-                  <label className="mb-1 block text-[11px] text-[var(--nv-muted)]">
-                    Endpoint LibreTranslate
-                  </label>
-                  <input
-                    type="url"
-                    value={settings.libreTranslateUrl}
-                    onChange={(e) => onUpdate({ libreTranslateUrl: e.target.value })}
-                    placeholder="https://libretranslate.com/translate"
-                    className="min-h-[38px] w-full rounded-[4px] border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs"
-                  />
-                </div>
-              )}
+              <GeminiTranslationConfig
+                settings={settings}
+                onUpdate={onUpdate}
+                surface="sheet"
+                idPrefix="sheet-trans"
+              />
 
               <div className="flex items-center justify-between gap-4 rounded-[4px] bg-[var(--nv-sheet-card)] px-3.5 py-2.5">
                 <div>
