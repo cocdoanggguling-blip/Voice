@@ -8,7 +8,6 @@ import {
   ChevronUp,
   Copy,
   FileText,
-  Headphones,
   Languages,
   List,
   MessageSquarePlus,
@@ -20,6 +19,7 @@ import {
   Share2,
   SlidersHorizontal,
   Sun,
+  Volume2,
 } from 'lucide-react';
 import {
   computeAllChapterCharLengths,
@@ -103,7 +103,10 @@ import {
   type BookReplaceContext,
   type ChapterParagraphInput,
 } from '../utils/textReplace';
-import { findLocationAtChapterOffset } from '../utils/textSegmentation';
+import {
+  findLocationAtChapterOffset,
+  normalizeBookLocale,
+} from '../utils/textSegmentation';
 import { AppearanceSheet } from './AppearanceSheet';
 import { BookSearchModal } from './BookSearchModal';
 import { FindReplacePopup } from './FindReplacePopup';
@@ -201,7 +204,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [paragraphs, setParagraphs] = useState<ParsedParagraph[]>([]);
   const [allSentences, setAllSentences] = useState<SentenceSegment[]>([]);
   const [activeSentenceIdx, setActiveSentenceIdx] = useState<number>(0);
-  const [activeWordIdx, setActiveWordIdx] = useState<number>(0);
   const [activeCharOffset, setActiveCharOffset] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoadingBook, setIsLoadingBook] = useState(true);
@@ -296,12 +298,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const chapterIndexRef = useRef(chapterIndex);
   const chaptersRef = useRef(chapters);
   const activeSentenceRef = useRef(activeSentenceIdx);
-  const activeWordRef = useRef(activeWordIdx);
+  const activeWordRef = useRef(0);
   const activeOffsetRef = useRef(activeCharOffset);
   const longPressTimerRef = useRef<number | null>(null);
   const undoTimerRef = useRef<number | null>(null);
 
   const seriesKey = useMemo(() => extractSeriesName(bookMeta), [bookMeta]);
+  const safeBookLang = useMemo(() => normalizeBookLocale(bookMeta.language), [bookMeta.language]);
   const bookCtx = useMemo<BookReplaceContext>(
     () => ({
       bookId: bookMeta.id,
@@ -322,8 +325,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   chapterIndexRef.current = chapterIndex;
   chaptersRef.current = chapters;
   activeSentenceRef.current = activeSentenceIdx;
-  activeWordRef.current = activeWordIdx;
-  activeOffsetRef.current = activeCharOffset;
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -405,9 +406,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   useEffect(() => {
     const controller = new TtsPlaybackController(ttsSettings, {
       onHighlight: (sIdx, wIdx, charOffset) => {
-        setActiveSentenceIdx(sIdx);
-        setActiveWordIdx(wIdx);
-        setActiveCharOffset(charOffset);
+        activeWordRef.current = wIdx;
+        activeOffsetRef.current = charOffset;
+        if (sIdx !== activeSentenceRef.current) {
+          activeSentenceRef.current = sIdx;
+          setActiveSentenceIdx(sIdx);
+          setActiveCharOffset(charOffset);
+        }
       },
       onPlaybackStateChange: (playing) => {
         setIsPlaying(playing);
@@ -560,7 +565,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         const segs = await loadChapterSegments(
           opened.book,
           startChap,
-          bookMeta.language || 'id',
+          safeBookLang,
           initialReplaceOpts
         );
         if (cancelled) return;
@@ -580,7 +585,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         setParagraphs(segs.paragraphs);
         setAllSentences(segs.allSentences);
         setActiveSentenceIdx(loc.sentenceIndex);
-        setActiveWordIdx(loc.wordIndex);
+        activeSentenceRef.current = loc.sentenceIndex;
+        activeWordRef.current = loc.wordIndex;
+        activeOffsetRef.current = loc.chapterOffset;
         setActiveCharOffset(loc.chapterOffset);
 
         const chapTitle =
@@ -661,7 +668,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       const segs = await loadChapterSegments(
         openedEpub.book,
         currentChap,
-        bookMeta.language || 'id',
+        safeBookLang,
         nextOpts
       );
       const loc = findLocationAtChapterOffset(segs.allSentences, keepOffset);
@@ -669,7 +676,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       setParagraphs(segs.paragraphs);
       setAllSentences(segs.allSentences);
       setActiveSentenceIdx(loc.sentenceIndex);
-      setActiveWordIdx(loc.wordIndex);
+      activeSentenceRef.current = loc.sentenceIndex;
+      activeWordRef.current = loc.wordIndex;
+      activeOffsetRef.current = loc.chapterOffset;
       setActiveCharOffset(loc.chapterOffset);
 
       const chapTitle =
@@ -697,7 +706,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         }
       });
     },
-    [bookCtx, bookMeta.id, bookMeta.language, bookMeta.title, openedEpub]
+    [bookCtx, bookMeta.id, bookMeta.title, openedEpub, safeBookLang]
   );
 
   const handleSelectChapter = useCallback(
@@ -709,7 +718,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       const segs = await loadChapterSegments(
         openedEpub.book,
         clamped,
-        bookMeta.language || 'id',
+        safeBookLang,
         replaceOptionsRef.current
       );
       const loc = findLocationAtChapterOffset(segs.allSentences, targetCharOffset);
@@ -718,7 +727,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       setParagraphs(segs.paragraphs);
       setAllSentences(segs.allSentences);
       setActiveSentenceIdx(loc.sentenceIndex);
-      setActiveWordIdx(loc.wordIndex);
+      activeSentenceRef.current = loc.sentenceIndex;
+      activeWordRef.current = loc.wordIndex;
+      activeOffsetRef.current = loc.chapterOffset;
       setActiveCharOffset(loc.chapterOffset);
       setPageIndex(0);
       setInlineTranslations({});
@@ -750,7 +761,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     },
-    [bookCtx, bookMeta.language, bookMeta.title, openedEpub, persistPosition]
+    [bookCtx, bookMeta.title, openedEpub, persistPosition, safeBookLang]
   );
 
   // Compute virtual pages dynamically from layout settings & viewport
@@ -785,7 +796,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       } else {
         const loc = findLocationAtChapterOffset(allSentences, target.charOffset);
         setActiveSentenceIdx(loc.sentenceIndex);
-        setActiveWordIdx(loc.wordIndex);
+        activeSentenceRef.current = loc.sentenceIndex;
+        activeWordRef.current = loc.wordIndex;
+        activeOffsetRef.current = loc.chapterOffset;
         setActiveCharOffset(loc.chapterOffset);
         const el = sentenceRefs.current.get(loc.sentenceIndex);
         el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -827,7 +840,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         if (cancelled) return;
         const cacheKey = `${para.id}:${readerSettings.targetLanguage}:${readerSettings.translationProvider}`;
         if (inlineTranslations[cacheKey]) continue;
-        const res = await translateText(para.rawText, readerSettings.targetLanguage, bookMeta.language, {
+        const res = await translateText(para.rawText, readerSettings.targetLanguage, safeBookLang, {
           provider: readerSettings.translationProvider,
           libreTranslateUrl: readerSettings.libreTranslateUrl,
         });
@@ -841,13 +854,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       cancelled = true;
     };
   }, [
-    bookMeta.language,
     inlineTranslations,
     paragraphs,
     readerSettings.libreTranslateUrl,
     readerSettings.paragraphTranslateEnabled,
     readerSettings.targetLanguage,
     readerSettings.translationProvider,
+    safeBookLang,
   ]);
 
   const triggerTranslationPopup = useCallback(
@@ -856,7 +869,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       setPopupSourceText(text);
       setPopupSentenceIdx(sentenceIdx);
       setPopupLoading(true);
-      const res = await translateText(text, targetLang, bookMeta.language, {
+      const res = await translateText(text, targetLang, safeBookLang, {
         provider: readerSettings.translationProvider,
         libreTranslateUrl: readerSettings.libreTranslateUrl,
       });
@@ -864,10 +877,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       setPopupLoading(false);
     },
     [
-      bookMeta.language,
       readerSettings.libreTranslateUrl,
       readerSettings.targetLanguage,
       readerSettings.translationProvider,
+      safeBookLang,
     ]
   );
 
@@ -1091,8 +1104,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     readerSettings.textAlign === 'justify' || readerSettings.textAlign === 'original-hyphen';
   const useIndonesianHyphenator =
     isHyphenationActive &&
-    (bookMeta.language.toLowerCase().startsWith('id') ||
-      bookMeta.language.toLowerCase().startsWith('ms'));
+    (safeBookLang.toLowerCase().startsWith('id') ||
+      safeBookLang.toLowerCase().startsWith('ms'));
 
   const textAlignStyle: React.CSSProperties['textAlign'] =
     readerSettings.textAlign === 'left'
@@ -1130,7 +1143,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
       {/* Toast Feedback */}
       {toastMessage && (
-        <div className="pointer-events-none fixed top-20 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-[var(--nv-text)] px-4 py-2 text-xs font-semibold text-[var(--nv-bg)] shadow-lg whitespace-nowrap">
+        <div className="pointer-events-none fixed top-24 left-1/2 z-50 -translate-x-1/2 rounded-[6px] border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] px-4 py-2 text-xs font-semibold text-[var(--nv-text)] shadow-xl whitespace-nowrap">
           {toastMessage}
         </div>
       )}
@@ -1140,7 +1153,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-24 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center justify-between gap-3 rounded-xl bg-[var(--nv-text)] px-4 py-2.5 text-xs font-medium text-[var(--nv-bg)] shadow-2xl"
+          className="fixed bottom-24 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center justify-between gap-3 rounded-[6px] border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] px-4 py-2.5 text-xs font-medium text-[var(--nv-text)] shadow-2xl"
         >
           <span>{undoSnackbar.message}</span>
           <button
@@ -1163,245 +1176,251 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               }
               showToast('Perubahan dibatalkan.');
             }}
-            className="shrink-0 font-bold tracking-wide text-amber-400 hover:underline whitespace-nowrap"
+            className="shrink-0 font-bold tracking-wide text-[var(--nv-gold)] hover:underline whitespace-nowrap"
           >
             BATALKAN
           </button>
         </div>
       )}
 
-      {/* Top Reader Bar (Tahap 1) */}
+      {/* Top Reader Bar (ReadEra Teal Header + Title/Author/Page + Brightness Strip) */}
       {barsVisible && (
-        <header className="sticky top-0 z-30 border-b border-[var(--nv-border)] bg-[var(--nv-bg)]/95 backdrop-blur-md pt-safe">
-          <div className="mx-auto flex h-12 max-w-5xl items-center justify-between gap-1 px-2 sm:px-4">
-            <button
-              type="button"
-              onClick={() => {
-                controllerRef.current?.pause();
-                void persistPosition(
-                  chapterIndexRef.current,
-                  activeOffsetRef.current,
-                  activeSentenceRef.current,
-                  activeWordRef.current,
-                  chapters.length || bookMeta.totalChapters
-                );
-                onBackToLibrary();
-              }}
-              aria-label="Kembali ke Perpustakaan"
-              className="inline-flex min-h-[40px] min-w-[40px] shrink-0 items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
-            >
-              <ArrowLeft className="h-5 w-5" aria-hidden="true" />
-            </button>
-
-            <div className="relative flex items-center gap-0.5 shrink-0">
+        <header className="sticky top-0 z-30 shadow-md pt-safe">
+          <div className="bg-[var(--nv-teal)] text-[var(--nv-teal-text)]">
+            <div className="mx-auto flex h-12 max-w-5xl items-center justify-between gap-1 px-1.5 sm:px-4">
               <button
                 type="button"
                 onClick={() => {
-                  setTtsBarExpanded((v) => !v);
-                  if (!isPlaying && !ttsBarExpanded) {
-                    setTtsBarExpanded(true);
-                  }
+                  controllerRef.current?.pause();
+                  void persistPosition(
+                    chapterIndexRef.current,
+                    activeOffsetRef.current,
+                    activeSentenceRef.current,
+                    activeWordRef.current,
+                    chapters.length || bookMeta.totalChapters
+                  );
+                  onBackToLibrary();
                 }}
-                aria-label="Tampilkan atau tutup kontrol TTS"
-                title="Baca Suara (TTS)"
-                className={`inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl ${
-                  isPlaying || ttsBarExpanded
-                    ? 'bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                    : 'hover:bg-black/5 dark:hover:bg-white/5'
-                }`}
+                aria-label="Kembali ke Perpustakaan"
+                className="inline-flex min-h-[40px] min-w-[40px] shrink-0 items-center justify-center rounded-lg hover:bg-white/10"
               >
-                <Headphones className="h-5 w-5" aria-hidden="true" />
+                <ArrowLeft className="h-5 w-5" aria-hidden="true" />
               </button>
 
-              <button
-                type="button"
-                onClick={() => setSearchOpen(true)}
-                aria-label="Cari dalam buku"
-                title="Cari"
-                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
-              >
-                <Search className="h-5 w-5" aria-hidden="true" />
-              </button>
+              <div className="relative flex items-center gap-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTtsBarExpanded((v) => !v);
+                    if (!isPlaying && !ttsBarExpanded) {
+                      setTtsBarExpanded(true);
+                    }
+                  }}
+                  aria-label="Tampilkan atau tutup kontrol TTS"
+                  title="Baca Suara (TTS)"
+                  className={`inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg ${
+                    isPlaying || ttsBarExpanded
+                      ? 'bg-white/15 text-[var(--nv-ui-bar-highlight)]'
+                      : 'text-[var(--nv-teal-text)] hover:bg-white/10'
+                  }`}
+                >
+                  <Volume2 className="h-5 w-5" aria-hidden="true" />
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setTocOpen(true)}
-                aria-label="Buka Daftar Isi, Penanda, dan Kutipan"
-                title="Daftar Isi"
-                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
-              >
-                <List className="h-5 w-5" aria-hidden="true" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setSearchOpen(true)}
+                  aria-label="Cari dalam buku"
+                  title="Cari"
+                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
+                >
+                  <Search className="h-5 w-5" aria-hidden="true" />
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setAppearanceOpen(true)}
-                aria-label="Buka Setelan Tampilan"
-                title="Setelan Tampilan"
-                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
-              >
-                <Settings className="h-5 w-5" aria-hidden="true" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setTocOpen(true)}
+                  aria-label="Buka Daftar Isi, Penanda, dan Kutipan"
+                  title="Daftar Isi"
+                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
+                >
+                  <List className="h-5 w-5" aria-hidden="true" />
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setMenuOpen((v) => !v)}
-                aria-label="Menu lainnya"
-                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
-              >
-                <MoreVertical className="h-5 w-5" aria-hidden="true" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setAppearanceOpen(true)}
+                  aria-label="Buka Setelan Tampilan"
+                  title="Setelan Tampilan"
+                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
+                >
+                  <Settings className="h-5 w-5" aria-hidden="true" />
+                </button>
 
-              {menuOpen && (
-                <div className="absolute right-0 top-12 z-40 w-56 rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-1.5 shadow-xl">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      void handleAddBookmark();
-                    }}
-                    className="flex min-h-[42px] w-full items-center gap-2.5 rounded-xl px-3 text-left text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <BookmarkPlus className="h-4 w-4 text-[var(--nv-accent)]" />
-                    <span>Tambah Penanda Posisi</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onUpdateReaderSettings({
-                        paragraphTranslateEnabled: !readerSettings.paragraphTranslateEnabled,
-                      });
-                    }}
-                    className="flex min-h-[42px] w-full items-center gap-2.5 rounded-xl px-3 text-left text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <Languages className="h-4 w-4 text-[var(--nv-accent)]" />
-                    <span>
-                      {readerSettings.paragraphTranslateEnabled
-                        ? 'Matikan Terjemahan Paragraf'
-                        : 'Aktifkan Terjemahan Paragraf'}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setFindReplaceState({
-                        open: true,
-                        mode: 'manual',
-                        initialPattern: '',
-                        editingRule: null,
-                        presetTtsOnly: false,
-                        paragraphIndex: allSentences[activeSentenceIdx]?.paragraphIndex,
-                        charOffset: activeCharOffset,
-                      });
-                    }}
-                    className="flex min-h-[42px] w-full items-center gap-2.5 rounded-xl px-3 text-left text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <Replace className="h-4 w-4 text-[var(--nv-accent)]" />
-                    <span>Cari &amp; ganti</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setRulesModalFilter('all');
-                      setRulesModalOpen(true);
-                    }}
-                    className="flex min-h-[42px] w-full items-center gap-2.5 rounded-xl px-3 text-left text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <SlidersHorizontal className="h-4 w-4 text-[var(--nv-accent)]" />
-                    <span>Aturan ganti teks ({replaceRules.length})</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setTtsSheetOpen(true);
-                    }}
-                    className="flex min-h-[42px] w-full items-center gap-2.5 rounded-xl px-3 text-left text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <Headphones className="h-4 w-4 text-[var(--nv-accent)]" />
-                    <span>Pengaturan Suara (TTS)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setBarsVisible(false);
-                    }}
-                    className="flex min-h-[42px] w-full items-center gap-2.5 rounded-xl px-3 text-left text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <FileText className="h-4 w-4 text-[var(--nv-muted)]" />
-                    <span>Mode Layar Penuh</span>
-                  </button>
-                </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-label="Menu lainnya"
+                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-white hover:bg-white/10"
+                >
+                  <MoreVertical className="h-5 w-5" aria-hidden="true" />
+                </button>
+
+                {menuOpen && (
+                  <div className="absolute right-1 top-11 z-40 w-60 rounded-[6px] border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] p-1 text-[var(--nv-text)] shadow-2xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void handleAddBookmark();
+                      }}
+                      className="flex min-h-[42px] w-full items-center gap-2.5 rounded px-3 text-left text-xs font-medium hover:bg-white/10"
+                    >
+                      <BookmarkPlus className="h-4 w-4 text-[var(--nv-gold)]" />
+                      <span>Tambah Penanda Posisi</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onUpdateReaderSettings({
+                          paragraphTranslateEnabled: !readerSettings.paragraphTranslateEnabled,
+                        });
+                      }}
+                      className="flex min-h-[42px] w-full items-center gap-2.5 rounded px-3 text-left text-xs font-medium hover:bg-white/10"
+                    >
+                      <Languages className="h-4 w-4 text-[var(--nv-cyan)]" />
+                      <span>
+                        {readerSettings.paragraphTranslateEnabled
+                          ? 'Matikan Terjemahan Paragraf'
+                          : 'Aktifkan Terjemahan Paragraf'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setFindReplaceState({
+                          open: true,
+                          mode: 'manual',
+                          initialPattern: '',
+                          editingRule: null,
+                          presetTtsOnly: false,
+                          paragraphIndex: allSentences[activeSentenceIdx]?.paragraphIndex,
+                          charOffset: activeCharOffset,
+                        });
+                      }}
+                      className="flex min-h-[42px] w-full items-center gap-2.5 rounded px-3 text-left text-xs font-medium hover:bg-white/10"
+                    >
+                      <Replace className="h-4 w-4 text-[var(--nv-gold)]" />
+                      <span>Cari &amp; ganti</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setRulesModalFilter('all');
+                        setRulesModalOpen(true);
+                      }}
+                      className="flex min-h-[42px] w-full items-center gap-2.5 rounded px-3 text-left text-xs font-medium hover:bg-white/10"
+                    >
+                      <SlidersHorizontal className="h-4 w-4 text-[var(--nv-cyan)]" />
+                      <span>Aturan ganti teks ({replaceRules.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setTtsSheetOpen(true);
+                      }}
+                      className="flex min-h-[42px] w-full items-center gap-2.5 rounded px-3 text-left text-xs font-medium hover:bg-white/10"
+                    >
+                      <Volume2 className="h-4 w-4 text-[var(--nv-gold)]" />
+                      <span>Pengaturan Suara (TTS)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setBarsVisible(false);
+                      }}
+                      className="flex min-h-[42px] w-full items-center gap-2.5 rounded px-3 text-left text-xs font-medium hover:bg-white/10"
+                    >
+                      <FileText className="h-4 w-4 text-[var(--nv-muted)]" />
+                      <span>Mode Layar Penuh</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
-          {/* Book Title, Author, Chapter Name & In-Chapter Page Row */}
-          <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 border-t border-[var(--nv-border)]/50 px-3 py-1 sm:px-5">
-            <div className="min-w-0">
-              <p className="truncate text-xs font-semibold leading-tight">
-                {bookMeta.title}{' '}
-                <span className="font-normal text-[var(--nv-muted)]">· {bookMeta.author}</span>
+            {/* Book Title, Author, Chapter Name & In-Chapter Page Directly Inside Teal Bar */}
+            <div className="mx-auto max-w-5xl px-3.5 pb-2.5 sm:px-5">
+              <p className="truncate text-sm font-bold leading-snug text-white">
+                {bookMeta.title}
               </p>
-              <p className="truncate text-[11px] text-[var(--nv-muted)] leading-tight">
-                {currentChapterTitle}
+              <p className="truncate text-[11px] leading-tight text-white/80">
+                {bookMeta.author}
+              </p>
+              <p className="truncate text-[11px] leading-tight text-white/85 tabular-nums">
+                {currentChapterTitle} - halaman {virtualLocation.chapterLocalPage} /{virtualLocation.chapterTotalPages}
               </p>
             </div>
-            <span className="shrink-0 text-[11px] font-semibold text-[var(--nv-muted)] tabular-nums whitespace-nowrap">
-              halaman {virtualLocation.chapterLocalPage} / {virtualLocation.chapterTotalPages}
-            </span>
           </div>
 
           {/* Collapsible Brightness Bar */}
-          <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 border-t border-[var(--nv-border)]/70 px-3 py-1">
-            {!readerSettings.brightnessCollapsed ? (
-              <>
-                <Sun className="h-4 w-4 shrink-0 text-[var(--nv-muted)]" aria-hidden="true" />
-                <input
-                  type="range"
-                  aria-label="Kecerahan layar"
-                  min={0.2}
-                  max={1.0}
-                  step={0.05}
-                  value={readerSettings.brightness}
-                  onChange={(e) => onUpdateReaderSettings({ brightness: Number(e.target.value) })}
-                  className="h-2 flex-1 accent-[var(--nv-accent)]"
-                />
-                <span className="w-10 text-right text-[11px] font-semibold tabular-nums text-[var(--nv-muted)]">
-                  {Math.round(readerSettings.brightness * 100)}%
-                </span>
-              </>
-            ) : (
-              <span className="text-[11px] text-[var(--nv-muted)] flex items-center gap-1.5">
-                <Sun className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Kecerahan {Math.round(readerSettings.brightness * 100)}%</span>
-              </span>
-            )}
-
-            <button
-              type="button"
-              onClick={() =>
-                onUpdateReaderSettings({
-                  brightnessCollapsed: !readerSettings.brightnessCollapsed,
-                })
-              }
-              aria-label={
-                readerSettings.brightnessCollapsed
-                  ? 'Buka slider kecerahan'
-                  : 'Lipat slider kecerahan'
-              }
-              className="inline-flex h-7 w-7 items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5"
-            >
-              {readerSettings.brightnessCollapsed ? (
-                <ChevronDown className="h-4 w-4" />
+          <div className="border-b border-white/10 bg-[#2a2a2c]/95 text-white/80 backdrop-blur-sm">
+            <div className="mx-auto flex max-w-5xl items-center justify-between gap-2.5 px-3 py-1 sm:px-5">
+              {!readerSettings.brightnessCollapsed ? (
+                <>
+                  <Sun className="h-4 w-4 shrink-0 text-white/75" aria-hidden="true" />
+                  <input
+                    type="range"
+                    aria-label="Kecerahan layar"
+                    min={0.2}
+                    max={1.0}
+                    step={0.05}
+                    value={readerSettings.brightness}
+                    onChange={(e) => onUpdateReaderSettings({ brightness: Number(e.target.value) })}
+                    style={{
+                      background: `linear-gradient(to right, #8e8e93 ${((readerSettings.brightness - 0.2) / 0.8) * 100}%, rgba(255,255,255,0.18) ${((readerSettings.brightness - 0.2) / 0.8) * 100}%)`,
+                      height: '3px',
+                      borderRadius: '9999px',
+                    }}
+                    className="nv-range nv-range-grey flex-1"
+                  />
+                  <span className="w-9 text-right text-[11px] font-medium tabular-nums text-white/75">
+                    {Math.round(readerSettings.brightness * 100)}%
+                  </span>
+                </>
               ) : (
-                <ChevronUp className="h-4 w-4" />
+                <span className="flex items-center gap-1.5 text-[11px] text-white/75">
+                  <Sun className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Kecerahan {Math.round(readerSettings.brightness * 100)}%</span>
+                </span>
               )}
-            </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateReaderSettings({
+                    brightnessCollapsed: !readerSettings.brightnessCollapsed,
+                  })
+                }
+                aria-label={
+                  readerSettings.brightnessCollapsed
+                    ? 'Buka slider kecerahan'
+                    : 'Lipat slider kecerahan'
+                }
+                className="inline-flex h-7 w-7 items-center justify-center rounded text-white/80 hover:bg-white/10"
+              >
+                {readerSettings.brightnessCollapsed ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
+              </button>
+            </div>
           </div>
         </header>
       )}
@@ -1438,7 +1457,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         ) : (
           <article
             key={`${chapterIndex}-${pageIndex}`}
-            lang={bookMeta.language || 'id'}
+            lang={safeBookLang}
             className={`${fontClass} ${pageAnimClass} ${isHyphenationActive ? 'nv-hyphen-auto' : ''} ${
               readerSettings.twoPageSpread && viewportSize.w >= 768
                 ? `columns-2 gap-10 ${
@@ -1473,13 +1492,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
               const tagStyle =
                 para.tag === 'h1'
-                  ? 'mb-5 text-left text-2xl font-bold leading-tight tracking-tight sm:text-3xl'
+                  ? 'mb-6 text-center text-2xl font-bold leading-tight tracking-tight sm:text-3xl'
                   : para.tag === 'h2'
                     ? 'mb-4 mt-7 text-left text-xl font-bold leading-snug'
                     : para.tag === 'h3'
                       ? 'mb-3 mt-5 text-left text-lg font-semibold'
                       : para.tag === 'blockquote'
-                        ? 'my-4 border-l-2 border-[var(--nv-accent)]/50 pl-4 italic text-[var(--nv-muted)]'
+                        ? 'my-4 border-l-2 border-[var(--nv-gold)]/60 pl-4 italic text-[var(--nv-muted)]'
                         : 'indent-6';
 
               return (
@@ -1520,22 +1539,21 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                             }`}
                           >
                             {sentence.words.map((word, wIdx) => {
-                              const isCurrentWord =
-                                isCurrentSentence && isPlaying && word.wordIndex === activeWordIdx;
                               const fmt = getWordFormat(word, para.inlineFormats);
                               const displayWord = useIndonesianHyphenator
                                 ? applyIndonesianHyphenation(word.text)
                                 : word.text;
+                              const formatClass = `${fmt.italic ? 'italic' : ''} ${
+                                fmt.bold ? 'font-bold' : ''
+                              }`.trim();
 
                               return (
                                 <React.Fragment key={word.wordIndex}>
-                                  <span
-                                    className={`${isCurrentWord ? 'tts-word-active font-medium' : ''} ${
-                                      fmt.italic ? 'italic' : ''
-                                    } ${fmt.bold ? 'font-bold' : ''}`}
-                                  >
-                                    {displayWord}
-                                  </span>
+                                  {formatClass ? (
+                                    <span className={formatClass}>{displayWord}</span>
+                                  ) : (
+                                    displayWord
+                                  )}
                                   {wIdx < sentence.words.length - 1 ? ' ' : ''}
                                 </React.Fragment>
                               );
@@ -1639,7 +1657,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         <div
           role="dialog"
           aria-label="Menu seleksi teks"
-          className="fixed bottom-28 left-1/2 z-40 w-[calc(100%-1.5rem)] max-w-md -translate-x-1/2 rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-3 text-[var(--nv-text)] shadow-2xl space-y-2.5"
+          className="fixed bottom-28 left-1/2 z-40 w-[calc(100%-1.5rem)] max-w-md -translate-x-1/2 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] p-3.5 text-[var(--nv-text)] shadow-2xl space-y-2.5"
         >
           <p className="line-clamp-2 text-xs italic text-[var(--nv-muted)]">
             "{selectionMenu.text}"
@@ -1662,7 +1680,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                       sw.color
                     )
                   }
-                  className={`h-7 w-7 rounded-full border border-black/15 transition-transform hover:scale-110 ${sw.bg}`}
+                  className={`h-7 w-7 rounded-full border border-black/20 transition-transform hover:scale-110 ${sw.bg}`}
                 />
               ))}
             </div>
@@ -1677,7 +1695,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 setSelectionMenu(null);
                 showToast('Teks disalin.');
               }}
-              className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl border border-[var(--nv-border)] px-2 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
+              className="flex min-h-[38px] items-center justify-center gap-1 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-2 text-xs font-semibold hover:brightness-110"
             >
               <Copy className="h-3.5 w-3.5" />
               <span>Salin</span>
@@ -1695,7 +1713,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 });
                 setSelectionMenu(null);
               }}
-              className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl border border-[var(--nv-border)] px-2 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
+              className="flex min-h-[38px] items-center justify-center gap-1 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-2 text-xs font-semibold hover:brightness-110"
             >
               <MessageSquarePlus className="h-3.5 w-3.5" />
               <span>Catatan</span>
@@ -1708,9 +1726,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 setSelectionMenu(null);
                 void triggerTranslationPopup(text, sentenceIndex);
               }}
-              className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl border border-[var(--nv-border)] px-2 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
+              className="flex min-h-[38px] items-center justify-center gap-1 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-2 text-xs font-semibold hover:brightness-110"
             >
-              <Languages className="h-3.5 w-3.5" />
+              <Languages className="h-3.5 w-3.5 text-[var(--nv-cyan)]" />
               <span>Terjemah</span>
             </button>
 
@@ -1729,9 +1747,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   charOffset,
                 });
               }}
-              className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl border border-[var(--nv-border)] px-2 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 whitespace-nowrap"
+              className="flex min-h-[38px] items-center justify-center gap-1 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-2 text-xs font-semibold hover:brightness-110 whitespace-nowrap"
             >
-              <Replace className="h-3.5 w-3.5 text-[var(--nv-accent)]" />
+              <Replace className="h-3.5 w-3.5 text-[var(--nv-gold)]" />
               <span>Ganti teks</span>
             </button>
 
@@ -1740,7 +1758,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               onClick={() =>
                 handleReadFromSentence(selectionMenu.sentenceIndex ?? activeSentenceIdx)
               }
-              className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl bg-[var(--nv-accent)] px-2 text-xs font-semibold text-white whitespace-nowrap"
+              className="flex min-h-[38px] items-center justify-center gap-1 rounded-lg bg-[var(--nv-ui-accent)] px-2 text-xs font-bold text-[var(--nv-ui-accent-text)] hover:brightness-105 whitespace-nowrap"
             >
               <Play className="h-3.5 w-3.5 fill-current" />
               <span>Baca</span>
@@ -1761,7 +1779,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   // Ignore
                 }
               }}
-              className="flex min-h-[38px] items-center justify-center gap-1 rounded-xl border border-[var(--nv-border)] px-2 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
+              className="flex min-h-[38px] items-center justify-center gap-1 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-2 text-xs font-semibold hover:brightness-110"
             >
               <Share2 className="h-3.5 w-3.5" />
               <span>Bagikan</span>
@@ -1775,15 +1793,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
           onClick={() => setNoteDialog(null)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-5 shadow-xl space-y-3"
+            className="w-full max-w-md rounded-xl border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] p-5 text-[var(--nv-text)] shadow-2xl space-y-3"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-base font-bold">Tambah Catatan Kutipan</h2>
-            <p className="line-clamp-3 rounded-xl bg-[var(--nv-bg)] p-3 text-xs italic text-[var(--nv-muted)]">
+            <p className="line-clamp-3 rounded-lg bg-[var(--nv-sheet-card)] p-3 text-xs italic text-[var(--nv-muted)]">
               "{noteDialog.text}"
             </p>
             <textarea
@@ -1792,13 +1810,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               value={noteDialog.note}
               onChange={(e) => setNoteDialog({ ...noteDialog, note: e.target.value })}
               placeholder="Tulis catatan Anda di sini..."
-              className="w-full rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-3 text-sm"
+              className="w-full rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] p-3 text-sm focus:border-[var(--nv-cyan)] focus:outline-none"
             />
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setNoteDialog(null)}
-                className="min-h-[40px] rounded-xl border border-[var(--nv-border)] px-4 text-xs font-medium"
+                className="min-h-[40px] rounded-lg border border-[var(--nv-border)] px-4 text-xs font-medium hover:bg-white/5"
               >
                 Batal
               </button>
@@ -1813,7 +1831,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                     noteDialog.note
                   )
                 }
-                className="min-h-[40px] rounded-xl bg-[var(--nv-accent)] px-4 text-xs font-semibold text-white"
+                className="min-h-[40px] rounded-lg bg-[var(--nv-ui-accent)] px-4 text-xs font-bold text-[var(--nv-ui-accent-text)] hover:brightness-105"
               >
                 Simpan Catatan
               </button>
@@ -1950,7 +1968,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           });
         }}
         onPreviewVoice={(voiceURI) => {
-          const sample = bookMeta.language.startsWith('en')
+          const sample = safeBookLang.toLowerCase().startsWith('en')
             ? 'This is a preview of the selected reading voice, flowing smoothly across sentences.'
             : 'Ini adalah contoh suara pembacaan NovelVoice yang mengalir alami antar kalimat.';
           void controllerRef.current?.previewVoice(voiceURI, sample);

@@ -1,34 +1,65 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   BookOpen,
-  CheckCircle2,
+  CheckCheck,
+  Clock,
   Download,
   FolderInput,
-  FolderPlus,
-  Info,
   Layers,
   LayoutGrid,
+  Library as LibraryIcon,
   List as ListIcon,
+  Palette,
+  Pencil,
   Plus,
   Search,
+  Settings,
   Share2,
   Star,
   Trash2,
   Upload,
   X,
 } from 'lucide-react';
-import type { BookMetadata, ReaderTheme } from '../types/reader';
+import type {
+  BookMetadata,
+  CustomFontRecord,
+  ReaderPreset,
+  ReaderSettings,
+  ReaderTheme,
+  TtsEngineCapabilities,
+  TtsSettings,
+  TtsVoiceInfo,
+} from '../types/reader';
+import {
+  checkAndroidNotificationPermission,
+  getSystemVoices,
+  getTtsEngineCapabilities,
+  openBatteryOptimizationSettings,
+  openNativeTtsSettings,
+  previewVoiceSample,
+  requestAndroidNotificationPermission,
+  type NotificationPermissionStatus,
+} from '../services/ttsBridge';
 import {
   compareNaturalTitles,
   extractSeriesName,
   formatFileSizeId,
 } from '../utils/bookMetrics';
+import { AppearanceSheet } from './AppearanceSheet';
 import { BookDetailModal } from './BookDetailModal';
+import { MainSettingsModal } from './MainSettingsModal';
+import { TtsSettingsSheet } from './TtsSettingsSheet';
+import { UiColorCustomizer } from './UiColorCustomizer';
 
 interface LibraryViewProps {
   books: BookMetadata[];
   theme: ReaderTheme;
+  uiColor: string;
+  readerSettings: ReaderSettings;
+  ttsSettings: TtsSettings;
+  customFonts: CustomFontRecord[];
+  presets: ReaderPreset[];
   isLoading: boolean;
   isImporting: boolean;
   importError: string | null;
@@ -38,6 +69,15 @@ interface LibraryViewProps {
   onUpdateBookMetadata: (updated: BookMetadata) => Promise<void> | void;
   onDeleteBook: (bookId: string) => void;
   onChangeTheme: (theme: ReaderTheme) => void;
+  onChangeUiColor: (uiColor: string) => void;
+  onUpdateReaderSettings: (patch: Partial<ReaderSettings>) => void;
+  onUpdateTtsSettings: (patch: Partial<TtsSettings>) => void;
+  onImportCustomFont: (file: File) => Promise<void> | void;
+  onDeleteCustomFont: (fontId: string) => Promise<void> | void;
+  onSavePreset: (name: string) => void;
+  onApplyPreset: (preset: ReaderPreset) => void;
+  onDeletePreset: (id: string) => void;
+  onResetAllSettings: () => void;
   onExportBackup: () => Promise<void> | void;
   onImportBackup: (file: File) => Promise<void> | void;
 }
@@ -48,6 +88,11 @@ type SortMode = 'natural' | 'author' | 'lastRead' | 'addedAt' | 'size';
 export const LibraryView: React.FC<LibraryViewProps> = ({
   books,
   theme,
+  uiColor,
+  readerSettings,
+  ttsSettings,
+  customFonts,
+  presets,
   isLoading,
   isImporting,
   importError,
@@ -57,6 +102,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onUpdateBookMetadata,
   onDeleteBook,
   onChangeTheme,
+  onChangeUiColor,
+  onUpdateReaderSettings,
+  onUpdateTtsSettings,
+  onImportCustomFont,
+  onDeleteCustomFont,
+  onSavePreset,
+  onApplyPreset,
+  onDeletePreset,
+  onResetAllSettings,
   onExportBackup,
   onImportBackup,
 }) => {
@@ -69,7 +123,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<SortMode>('lastRead');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [groupBySeries, setGroupBySeries] = useState(false);
 
   const [detailBookId, setDetailBookId] = useState<string | null>(null);
@@ -77,6 +131,37 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   const [collectionTargetBookId, setCollectionTargetBookId] = useState<string | null>(null);
   const [newCollectionText, setNewCollectionText] = useState('');
   const [showBackupModal, setShowBackupModal] = useState(false);
+  const [showThemeSettingsModal, setShowThemeSettingsModal] = useState(false);
+  const [showMainSettings, setShowMainSettings] = useState(false);
+  const [showAppearanceFromHome, setShowAppearanceFromHome] = useState(false);
+  const [showTtsFromHome, setShowTtsFromHome] = useState(false);
+
+  const [voices, setVoices] = useState<TtsVoiceInfo[]>([]);
+  const [engineCapabilities, setEngineCapabilities] = useState<TtsEngineCapabilities>({
+    maxSpeechInputLength: 3500,
+    ssmlSupported: false,
+  });
+  const [notificationStatus, setNotificationStatus] = useState<NotificationPermissionStatus>({
+    granted: true,
+    sdkInt: 0,
+    isNative: false,
+  });
+
+  const refreshHomeTtsInfo = useCallback(async () => {
+    const [loadedVoices, caps, notif] = await Promise.all([
+      getSystemVoices(),
+      getTtsEngineCapabilities(),
+      checkAndroidNotificationPermission(),
+    ]);
+    setVoices(loadedVoices);
+    setEngineCapabilities(caps);
+    setNotificationStatus(notif);
+  }, []);
+
+  useEffect(() => {
+    if (!showMainSettings && !showTtsFromHome) return;
+    void refreshHomeTtsInfo();
+  }, [refreshHomeTtsInfo, showMainSettings, showTtsFromHome]);
 
   const allCollections = useMemo(() => {
     const set = new Set<string>();
@@ -166,30 +251,199 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     }
   };
 
+  const renderProgressTrack = (pct: number) => {
+    const clamped = Math.max(0, Math.min(100, pct));
+    return (
+      <div className="relative my-2.5 flex items-center">
+        <span className="h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--nv-chrome-muted)]/80" />
+        <div className="relative h-[1.5px] flex-1 bg-[var(--nv-chrome-border)]">
+          {clamped > 0 && (
+            <div
+              className="h-full bg-[var(--nv-gold)] transition-all duration-200"
+              style={{ width: `${clamped}%` }}
+            />
+          )}
+        </div>
+        <span
+          className={`h-[5px] w-[5px] shrink-0 rounded-full ${
+            clamped >= 99 ? 'bg-[var(--nv-gold)]' : 'bg-[var(--nv-chrome-muted)]/60'
+          }`}
+        />
+        <span className="ml-0.5 h-[5px] w-[5px] shrink-0 rounded-full bg-[var(--nv-chrome-muted)]/45" />
+      </div>
+    );
+  };
+
   const renderBookCard = (book: BookMetadata) => {
     const finished = book.isFinished || book.progressPercent >= 100;
     const isList = viewMode === 'list';
 
+    if (isList) {
+      return (
+        <article
+          key={book.id}
+          className="group flex flex-row items-stretch gap-3 rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] p-2.5 transition-colors hover:border-[var(--nv-gold)]/40"
+        >
+          <button
+            type="button"
+            onClick={() => onOpenBook(book)}
+            aria-label={`Buka buku ${book.title}`}
+            className="relative h-[126px] w-[84px] shrink-0 overflow-hidden rounded-[2px] bg-stone-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--nv-gold)]"
+          >
+            {book.coverDataUrl ? (
+              <img
+                src={book.coverDataUrl}
+                alt={`Sampul ${book.title}`}
+                referrerPolicy="no-referrer"
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-[#0e3a47] to-[#081f26] p-2 text-left text-stone-100">
+                <span className="text-[9px] font-semibold uppercase tracking-wider text-white/60">
+                  EPUB
+                </span>
+                <p className="font-reader-literata text-[11px] font-bold leading-snug line-clamp-4">
+                  {book.title}
+                </p>
+              </div>
+            )}
+          </button>
+
+          <div className="flex min-w-0 flex-1 flex-col justify-between">
+            <button
+              type="button"
+              onClick={() => onOpenBook(book)}
+              className="block w-full text-left focus:outline-none"
+            >
+              <h2 className="text-[15px] font-medium leading-snug text-[var(--nv-chrome-text)] line-clamp-2">
+                {book.title}
+              </h2>
+              <p className="mt-0.5 text-xs text-[var(--nv-chrome-muted)] line-clamp-1">
+                {book.author}
+              </p>
+              <p className="mt-0.5 text-xs text-[var(--nv-chrome-muted)] tabular-nums">
+                EPUB, {formatFileSizeId(book.fileSizeBytes)}
+                {book.progressPercent > 0
+                  ? ` · ${finished ? 'Selesai' : `${Math.round(book.progressPercent)}%`}`
+                  : ''}
+              </p>
+            </button>
+
+            <div>
+              {renderProgressTrack(book.progressPercent)}
+
+              {/* 7 Flat Monochrome ReadEra Action Icons */}
+              <div className="-mx-1 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => handleToggleFavorite(book)}
+                  aria-label={
+                    book.isFavorite ? `Hapus favorit ${book.title}` : `Favoritkan ${book.title}`
+                  }
+                  title="Favorit"
+                  className={`inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded transition-colors ${
+                    book.isFavorite
+                      ? 'text-[var(--nv-gold)]'
+                      : 'text-[var(--nv-chrome-muted)] hover:text-[var(--nv-chrome-text)]'
+                  }`}
+                >
+                  <Star
+                    className={`h-[17px] w-[17px] ${book.isFavorite ? 'fill-current' : ''}`}
+                    aria-hidden="true"
+                  />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onOpenBook(book)}
+                  aria-label={`Lanjutkan membaca ${book.title}`}
+                  title="Lanjutkan membaca"
+                  className={`inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded transition-colors ${
+                    book.progressPercent > 0 && !finished
+                      ? 'text-[var(--nv-gold)]'
+                      : 'text-[var(--nv-chrome-muted)] hover:text-[var(--nv-chrome-text)]'
+                  }`}
+                >
+                  <Clock className="h-[17px] w-[17px]" aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleToggleFinished(book)}
+                  aria-label={`Tandai selesai ${book.title}`}
+                  title="Tandai Selesai"
+                  className={`inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded transition-colors ${
+                    finished
+                      ? 'text-emerald-400'
+                      : 'text-[var(--nv-chrome-muted)] hover:text-[var(--nv-chrome-text)]'
+                  }`}
+                >
+                  <CheckCheck className="h-[17px] w-[17px]" aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCollectionTargetBookId(book.id)}
+                  aria-label={`Koleksi ${book.title}`}
+                  title="Tambahkan ke Koleksi"
+                  className={`inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded transition-colors ${
+                    book.collections && book.collections.length > 0
+                      ? 'text-[var(--nv-cyan)]'
+                      : 'text-[var(--nv-chrome-muted)] hover:text-[var(--nv-chrome-text)]'
+                  }`}
+                >
+                  <LibraryIcon className="h-[17px] w-[17px]" aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleShareBook(book)}
+                  aria-label={`Bagikan ${book.title}`}
+                  title="Bagikan"
+                  className="inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded text-[var(--nv-chrome-muted)] transition-colors hover:text-[var(--nv-chrome-text)]"
+                >
+                  <Share2 className="h-[17px] w-[17px]" aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteId(book.id)}
+                  aria-label={`Hapus ${book.title}`}
+                  title="Hapus"
+                  className="inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded text-[var(--nv-chrome-muted)] transition-colors hover:text-red-400"
+                >
+                  <Trash2 className="h-[17px] w-[17px]" aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDetailBookId(book.id)}
+                  aria-label={`Tentang dokumen ${book.title}`}
+                  title="Tentang Dokumen"
+                  className="inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded text-[var(--nv-chrome-muted)] transition-colors hover:text-[var(--nv-chrome-text)]"
+                >
+                  <Pencil className="h-[16px] w-[16px]" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+      );
+    }
+
+    // Grid View Card
     return (
       <article
         key={book.id}
-        className={`group flex overflow-hidden rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] transition-shadow hover:shadow-md ${
-          isList ? 'flex-row items-stretch' : 'flex-col'
-        }`}
+        className="group flex flex-col overflow-hidden rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] transition-colors hover:border-[var(--nv-gold)]/45"
       >
         <button
           type="button"
           onClick={() => onOpenBook(book)}
-          className={`flex text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--nv-accent)] ${
-            isList ? 'flex-1 flex-row items-center gap-3.5 p-3 min-w-0' : 'flex-1 flex-col'
-          }`}
           aria-label={`Buka buku ${book.title}`}
+          className="flex flex-1 flex-col text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--nv-gold)]"
         >
-          <div
-            className={`relative overflow-hidden bg-stone-200 dark:bg-stone-800 shrink-0 ${
-              isList ? 'h-24 w-16 rounded-lg' : 'aspect-[3/4] w-full'
-            }`}
-          >
+          <div className="relative aspect-[2/3] w-full overflow-hidden bg-stone-800">
             {book.coverDataUrl ? (
               <img
                 src={book.coverDataUrl}
@@ -198,133 +452,79 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
               />
             ) : (
-              <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-stone-700 to-stone-900 p-3 text-stone-100">
-                <span className="text-[10px] uppercase tracking-wider opacity-75">EPUB</span>
+              <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-[#0e3a47] to-[#081f26] p-3 text-stone-100">
+                <span className="text-[10px] uppercase tracking-wider text-white/60">EPUB</span>
                 <div>
-                  <p
-                    className={`font-reader-literata font-bold leading-snug line-clamp-3 ${
-                      isList ? 'text-[11px]' : 'text-base'
-                    }`}
-                  >
+                  <p className="font-reader-literata text-sm font-bold leading-snug line-clamp-3">
                     {book.title}
                   </p>
-                  {!isList && (
-                    <p className="mt-1.5 text-xs opacity-80 line-clamp-1">{book.author}</p>
-                  )}
+                  <p className="mt-1 text-xs text-white/75 line-clamp-1">{book.author}</p>
                 </div>
               </div>
             )}
           </div>
 
-          <div className={`flex flex-1 flex-col justify-between min-w-0 ${isList ? '' : 'p-4 w-full'}`}>
+          <div className="flex w-full flex-1 flex-col justify-between p-3">
             <div>
-              <h2 className="font-reader-literata text-sm font-bold leading-snug line-clamp-2 sm:text-base">
+              <h2 className="text-sm font-semibold leading-snug text-[var(--nv-chrome-text)] line-clamp-2">
                 {book.title}
               </h2>
-              <p className="mt-0.5 text-xs text-[var(--nv-muted)] line-clamp-1">{book.author}</p>
-              <p className="mt-1 text-[11px] text-[var(--nv-muted)] tabular-nums">
+              <p className="mt-0.5 text-xs text-[var(--nv-chrome-muted)] line-clamp-1">
+                {book.author}
+              </p>
+              <p className="mt-0.5 text-[11px] text-[var(--nv-chrome-muted)] tabular-nums">
                 EPUB, {formatFileSizeId(book.fileSizeBytes)} ·{' '}
-                {book.language.toUpperCase()}
-                {book.collections && book.collections.length > 0
-                  ? ` · ${book.collections[0]}`
-                  : ''}
+                {finished ? 'Selesai' : `${Math.round(book.progressPercent)}%`}
               </p>
             </div>
-
-            <div className={isList ? 'mt-2.5' : 'mt-3.5'}>
-              <div className="mb-1 flex items-center justify-between text-[11px] text-[var(--nv-muted)] tabular-nums">
-                <span>
-                  Bab {Math.min(book.totalChapters, book.currentChapterIndex + 1)} /{' '}
-                  {book.totalChapters}
-                </span>
-                <span>{finished ? 'Selesai' : `${Math.round(book.progressPercent)}%`}</span>
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--nv-border)]">
-                <div
-                  className="h-full rounded-full bg-[var(--nv-accent)] transition-all duration-200"
-                  style={{ width: `${Math.max(3, Math.min(100, book.progressPercent))}%` }}
-                />
-              </div>
-            </div>
+            {renderProgressTrack(book.progressPercent)}
           </div>
         </button>
 
-        {/* Rich Card Action Icons */}
-        <div
-          className={`flex items-center justify-between border-[var(--nv-border)] ${
-            isList
-              ? 'flex-col justify-center border-l px-1.5 py-2 gap-1'
-              : 'border-t px-2 py-1.5'
-          }`}
-        >
+        <div className="flex items-center justify-between border-t border-[var(--nv-chrome-border)] px-1.5 py-0.5">
           <button
             type="button"
             onClick={() => handleToggleFavorite(book)}
             aria-label={book.isFavorite ? `Hapus favorit ${book.title}` : `Favoritkan ${book.title}`}
-            title="Favorit"
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-              book.isFavorite
-                ? 'text-amber-500'
-                : 'text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5'
+            className={`inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded ${
+              book.isFavorite ? 'text-[var(--nv-gold)]' : 'text-[var(--nv-chrome-muted)]'
             }`}
           >
-            <Star className={`h-4 w-4 ${book.isFavorite ? 'fill-current' : ''}`} aria-hidden="true" />
+            <Star className={`h-4 w-4 ${book.isFavorite ? 'fill-current' : ''}`} />
           </button>
-
           <button
             type="button"
             onClick={() => handleToggleFinished(book)}
             aria-label={`Tandai selesai ${book.title}`}
-            title="Tandai Selesai"
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-              finished
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : 'text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5'
+            className={`inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded ${
+              finished ? 'text-emerald-400' : 'text-[var(--nv-chrome-muted)]'
             }`}
           >
-            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            <CheckCheck className="h-4 w-4" />
           </button>
-
           <button
             type="button"
             onClick={() => setCollectionTargetBookId(book.id)}
             aria-label={`Koleksi ${book.title}`}
-            title="Tambahkan ke Koleksi"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+            className="inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded text-[var(--nv-chrome-muted)]"
           >
-            <FolderPlus className="h-4 w-4" aria-hidden="true" />
+            <LibraryIcon className="h-4 w-4" />
           </button>
-
-          <button
-            type="button"
-            onClick={() => setDetailBookId(book.id)}
-            aria-label={`Tentang dokumen ${book.title}`}
-            title="Tentang Dokumen"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5"
-          >
-            <Info className="h-4 w-4" aria-hidden="true" />
-          </button>
-
-          {!isList && (
-            <button
-              type="button"
-              onClick={() => void handleShareBook(book)}
-              aria-label={`Bagikan ${book.title}`}
-              title="Bagikan"
-              className="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5"
-            >
-              <Share2 className="h-4 w-4" aria-hidden="true" />
-            </button>
-          )}
-
           <button
             type="button"
             onClick={() => setPendingDeleteId(book.id)}
             aria-label={`Hapus ${book.title}`}
-            title="Hapus"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--nv-muted)] transition-colors hover:bg-red-500/10 hover:text-red-600"
+            className="inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded text-[var(--nv-chrome-muted)] hover:text-red-400"
           >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            <Trash2 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setDetailBookId(book.id)}
+            aria-label={`Tentang dokumen ${book.title}`}
+            className="inline-flex min-h-[38px] min-w-[34px] items-center justify-center rounded text-[var(--nv-chrome-muted)] hover:text-[var(--nv-chrome-text)]"
+          >
+            <Pencil className="h-4 w-4" />
           </button>
         </div>
       </article>
@@ -332,7 +532,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[var(--nv-bg)] text-[var(--nv-text)] transition-colors duration-150">
+    <div className="min-h-screen bg-[var(--nv-chrome-bg)] text-[var(--nv-chrome-text)] transition-colors duration-150">
       {/* Hidden File & Folder Inputs */}
       <input
         ref={fileInputRef}
@@ -374,10 +574,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         aria-label="Impor file cadangan JSON"
       />
 
-      {/* Top Bar */}
-      <header className="sticky top-0 z-30 border-b border-[var(--nv-border)] bg-[var(--nv-bg)]/95 backdrop-blur-md pt-safe">
+      {/* Deep Teal Top AppBar + Integrated Tab Strip */}
+      <header className="sticky top-0 z-30 bg-[var(--nv-teal)] text-[var(--nv-teal-text)] shadow-md pt-safe">
         {searchOpen ? (
-          <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-3 sm:px-6">
+          <div className="mx-auto flex h-13 max-w-7xl items-center gap-2 px-2 sm:px-5">
             <button
               type="button"
               onClick={() => {
@@ -385,9 +585,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 setSearchQuery('');
               }}
               aria-label="Tutup pencarian"
-              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full hover:bg-white/10"
             >
-              <ArrowLeft className="h-5 w-5" />
+              <ArrowLeft className="h-5 w-5" aria-hidden="true" />
             </button>
             <input
               type="text"
@@ -395,33 +595,54 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Cari judul, pengarang, atau seri..."
-              className="min-h-[42px] flex-1 bg-transparent text-sm focus:outline-none"
+              className="min-h-[42px] flex-1 bg-transparent text-base text-white placeholder:text-white/60 focus:outline-none"
             />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                aria-label="Bersihkan kata kunci"
-                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (searchQuery) setSearchQuery('');
+                else setSearchOpen(false);
+              }}
+              aria-label="Bersihkan kata kunci"
+              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full hover:bg-white/10"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
           </div>
         ) : (
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-3 py-2.5 sm:px-6">
-            <span className="font-reader-literata text-xl font-bold tracking-tight whitespace-nowrap shrink-0">
+          <div className="mx-auto flex h-13 max-w-7xl items-center justify-between gap-2 px-3 sm:px-6">
+            <span className="text-lg font-semibold tracking-tight whitespace-nowrap shrink-0">
               NovelVoice
             </span>
 
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
               <button
                 type="button"
                 onClick={() => setSearchOpen(true)}
                 aria-label="Cari di perpustakaan"
-                className="inline-flex min-h-[42px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+                className="inline-flex min-h-[44px] min-w-[38px] sm:min-w-[42px] items-center justify-center rounded-full hover:bg-white/10"
               >
                 <Search className="h-5 w-5" aria-hidden="true" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowThemeSettingsModal(true)}
+                aria-label="Setelan warna dan tampilan UI"
+                title="Warna & Tampilan UI"
+                className="inline-flex min-h-[44px] min-w-[36px] sm:min-w-[40px] items-center justify-center rounded-full hover:bg-white/10"
+              >
+                <Palette className="h-5 w-5" aria-hidden="true" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowMainSettings(true)}
+                aria-label="Setelan aplikasi"
+                title="Setelan"
+                className="inline-flex min-h-[44px] min-w-[36px] sm:min-w-[40px] items-center justify-center rounded-full hover:bg-white/10"
+              >
+                <Settings className="h-5 w-5" aria-hidden="true" />
               </button>
 
               <button
@@ -429,7 +650,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 onClick={() => setShowBackupModal(true)}
                 aria-label="Cadangkan dan pulihkan data"
                 title="Cadangkan / Pulihkan JSON"
-                className="inline-flex min-h-[42px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+                className="hidden sm:inline-flex min-h-[44px] min-w-[40px] items-center justify-center rounded-full hover:bg-white/10"
               >
                 <Download className="h-5 w-5" aria-hidden="true" />
               </button>
@@ -440,9 +661,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 disabled={isImporting}
                 aria-label="Pindai folder EPUB"
                 title="Impor Folder EPUB"
-                className="inline-flex min-h-[42px] min-w-[40px] items-center justify-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-2 sm:px-3 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 whitespace-nowrap"
+                className="inline-flex min-h-[44px] min-w-[36px] sm:min-w-[40px] items-center justify-center gap-1.5 rounded-full px-1 sm:px-3 text-xs font-medium hover:bg-white/10 whitespace-nowrap"
               >
-                <FolderInput className="h-4 w-4" aria-hidden="true" />
+                <FolderInput className="h-5 w-5 sm:h-4 sm:w-4" aria-hidden="true" />
                 <span className="hidden sm:inline">Folder</span>
               </button>
 
@@ -450,13 +671,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isImporting}
-                className="inline-flex min-h-[42px] items-center gap-1.5 rounded-xl bg-[var(--nv-accent)] px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 active:scale-[0.98] disabled:opacity-60 whitespace-nowrap shrink-0"
+                className="ml-1 inline-flex min-h-[36px] items-center gap-1 rounded-[4px] bg-[var(--nv-ui-bar-highlight)] px-2.5 sm:px-3 py-1.5 text-xs font-bold tracking-wide text-[var(--nv-ui-bar-highlight-text)] transition-opacity hover:opacity-90 active:scale-[0.98] disabled:opacity-60 whitespace-nowrap shrink-0"
               >
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 <span>
                   {isImporting ? 'Mengimpor...' : (
                     <>
-                      Impor<span className="hidden sm:inline"> EPUB</span>
+                      IMPOR<span className="hidden sm:inline"> EPUB</span>
                     </>
                   )}
                 </span>
@@ -465,51 +686,58 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           </div>
         )}
 
-        {/* 5 Shelf Tabs */}
-        <div className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-4 pb-2 sm:px-6">
-          {(
-            [
-              { id: 'all', label: 'Semua' },
-              { id: 'recent', label: 'Terakhir' },
-              { id: 'favorites', label: 'Favorit' },
-              { id: 'finished', label: 'Selesai' },
-              { id: 'collections', label: 'Koleksi' },
-            ] as Array<{ id: ShelfTab; label: string }>
-          ).map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`min-h-[38px] rounded-xl px-3.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                tab === t.id
-                  ? 'bg-[var(--nv-accent)] text-white'
-                  : 'text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {/* 5 Shelf Tabs inside UI Bar with High-Contrast Active Underline */}
+        {!searchOpen && (
+          <nav
+            aria-label="Filter rak perpustakaan"
+            className="mx-auto flex max-w-7xl items-center px-1 sm:px-6"
+          >
+            {(
+              [
+                { id: 'all', label: 'SEMUA' },
+                { id: 'recent', label: 'TERAKHIR' },
+                { id: 'favorites', label: 'FAVORIT' },
+                { id: 'finished', label: 'SELESAI' },
+                { id: 'collections', label: 'KOLEKSI' },
+              ] as Array<{ id: ShelfTab; label: string }>
+            ).map((t) => {
+              const active = tab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={`relative min-h-[40px] flex-1 sm:flex-none px-1.5 sm:px-4 text-[11px] sm:text-xs font-bold tracking-wide transition-colors whitespace-nowrap ${
+                    active ? 'text-[var(--nv-teal-text)]' : 'text-[var(--nv-teal-text)]/70 hover:text-[var(--nv-teal-text)]'
+                  }`}
+                >
+                  {t.label}
+                  {active && (
+                    <span className="absolute inset-x-1 bottom-0 h-[3px] bg-[var(--nv-ui-bar-highlight)]" />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        )}
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:py-7">
-        {/* Toolbar: Book count, Sort, View Mode, Series Group, Quick Theme */}
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <h1 className="font-reader-literata text-xl font-bold tracking-tight sm:text-2xl">
-              Perpustakaan
-            </h1>
-            <span className="text-xs font-medium text-[var(--nv-muted)] tabular-nums">
+      <main className="mx-auto max-w-7xl px-2.5 py-3.5 sm:px-6 sm:py-5">
+        {/* Compact Toolbar: Book count, Sort, Series, View Mode, Quick Theme */}
+        <div className="mb-3.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-baseline gap-2 px-0.5">
+            <h1 className="text-base font-semibold tracking-tight sm:text-lg">Perpustakaan</h1>
+            <span className="text-xs text-[var(--nv-chrome-muted)] tabular-nums">
               {filteredAndSorted.length} buku
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-nowrap items-center gap-1.5 w-full sm:w-auto">
             <select
               aria-label="Urutkan buku"
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as SortMode)}
-              className="min-h-[40px] rounded-xl border border-[var(--nv-border)] bg-[var(--nv-surface)] px-3 text-xs font-medium"
+              className="min-h-[38px] min-w-0 flex-1 sm:flex-none rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] px-2 text-xs font-medium text-[var(--nv-chrome-text)]"
             >
               <option value="lastRead">Terakhir Dibaca</option>
               <option value="natural">Judul (Natural 1–200)</option>
@@ -523,40 +751,40 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               onClick={() => setGroupBySeries((g) => !g)}
               aria-pressed={groupBySeries}
               title="Kelompokkan menurut seri"
-              className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border px-3 text-xs font-medium whitespace-nowrap ${
+              className={`inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-[4px] border px-2.5 text-xs font-medium whitespace-nowrap ${
                 groupBySeries
-                  ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                  : 'border-[var(--nv-border)] bg-[var(--nv-surface)]'
+                  ? 'border-[var(--nv-gold)] bg-[var(--nv-gold)]/15 text-[var(--nv-gold)]'
+                  : 'border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] text-[var(--nv-chrome-text)]'
               }`}
             >
               <Layers className="h-4 w-4" aria-hidden="true" />
               <span className="hidden sm:inline">Seri</span>
             </button>
 
-            <div className="flex items-center rounded-xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-0.5">
-              <button
-                type="button"
-                onClick={() => setViewMode('grid')}
-                aria-label="Tampilan kisi"
-                className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${
-                  viewMode === 'grid'
-                    ? 'bg-[var(--nv-accent)] text-white'
-                    : 'text-[var(--nv-muted)]'
-                }`}
-              >
-                <LayoutGrid className="h-4 w-4" />
-              </button>
+            <div className="flex shrink-0 items-center overflow-hidden rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)]">
               <button
                 type="button"
                 onClick={() => setViewMode('list')}
                 aria-label="Tampilan daftar"
-                className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${
+                className={`inline-flex h-[36px] w-8 sm:w-9 items-center justify-center ${
                   viewMode === 'list'
-                    ? 'bg-[var(--nv-accent)] text-white'
-                    : 'text-[var(--nv-muted)]'
+                    ? 'bg-[var(--nv-teal)] text-white'
+                    : 'text-[var(--nv-chrome-muted)]'
                 }`}
               >
                 <ListIcon className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                aria-label="Tampilan kisi"
+                className={`inline-flex h-[36px] w-8 sm:w-9 items-center justify-center ${
+                  viewMode === 'grid'
+                    ? 'bg-[var(--nv-teal)] text-white'
+                    : 'text-[var(--nv-chrome-muted)]'
+                }`}
+              >
+                <LayoutGrid className="h-4 w-4" />
               </button>
             </div>
 
@@ -564,7 +792,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               aria-label="Tema cepat perpustakaan"
               value={theme}
               onChange={(e) => onChangeTheme(e.target.value as ReaderTheme)}
-              className="min-h-[40px] rounded-xl border border-[var(--nv-border)] bg-[var(--nv-surface)] px-2.5 text-xs font-medium"
+              className="min-h-[38px] shrink-0 rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] px-2 text-xs font-medium text-[var(--nv-chrome-text)]"
             >
               <option value="light">Siang</option>
               <option value="sepia">Sepia</option>
@@ -578,14 +806,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
         {/* Sub-filter for Collections */}
         {tab === 'collections' && (
-          <div className="mb-5 flex flex-wrap items-center gap-2">
+          <div className="mb-4 flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={() => setSelectedCollection('')}
-              className={`min-h-[36px] rounded-xl border px-3 text-xs font-medium ${
+              className={`min-h-[36px] rounded-[4px] border px-3 text-xs font-medium ${
                 selectedCollection === ''
-                  ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                  : 'border-[var(--nv-border)]'
+                  ? 'border-[var(--nv-gold)] bg-[var(--nv-gold)]/15 text-[var(--nv-gold)]'
+                  : 'border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)]'
               }`}
             >
               Semua Koleksi
@@ -595,10 +823,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 key={col}
                 type="button"
                 onClick={() => setSelectedCollection(col)}
-                className={`min-h-[36px] rounded-xl border px-3 text-xs font-medium ${
+                className={`min-h-[36px] rounded-[4px] border px-3 text-xs font-medium ${
                   selectedCollection === col
-                    ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                    : 'border-[var(--nv-border)]'
+                    ? 'border-[var(--nv-gold)] bg-[var(--nv-gold)]/15 text-[var(--nv-gold)]'
+                    : 'border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)]'
                 }`}
               >
                 {col}
@@ -610,34 +838,34 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         {importError && (
           <div
             role="alert"
-            className="mb-5 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200"
+            className="mb-4 rounded-[4px] border border-red-400/50 bg-red-950/50 px-4 py-3 text-sm text-red-200"
           >
             {importError}
           </div>
         )}
 
         {importInfo && (
-          <div className="mb-5 rounded-xl border border-[var(--nv-accent)]/40 bg-[var(--nv-accent-soft)] px-4 py-3 text-sm text-[var(--nv-text)]">
+          <div className="mb-4 rounded-[4px] border border-[var(--nv-gold)]/40 bg-[var(--nv-chrome-card)] px-4 py-3 text-sm text-[var(--nv-chrome-text)]">
             {importInfo}
           </div>
         )}
 
         {isLoading ? (
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {[1, 2].map((n) => (
+          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+            {[1, 2, 3].map((n) => (
               <div
                 key={n}
-                className="h-64 animate-pulse rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)]"
+                className="h-36 animate-pulse rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)]"
               />
             ))}
           </div>
         ) : filteredAndSorted.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--nv-border)] bg-[var(--nv-surface)] px-6 py-16 text-center">
-            <BookOpen className="mb-3 h-10 w-10 text-[var(--nv-muted)]" aria-hidden="true" />
-            <h2 className="text-lg font-semibold">
+          <div className="flex flex-col items-center justify-center rounded-[4px] border border-dashed border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] px-6 py-14 text-center">
+            <BookOpen className="mb-3 h-10 w-10 text-[var(--nv-chrome-muted)]" aria-hidden="true" />
+            <h2 className="text-base font-semibold">
               {books.length === 0 ? 'Rak buku masih kosong' : 'Belum ada buku pada filter ini'}
             </h2>
-            <p className="mt-1 max-w-md text-sm text-[var(--nv-muted)]">
+            <p className="mt-1 max-w-md text-xs text-[var(--nv-chrome-muted)]">
               {books.length === 0
                 ? 'Impor satu atau banyak file .epub (atau satu folder) dari penyimpanan perangkat.'
                 : 'Coba ubah tab, kata kunci pencarian, atau tandai buku terlebih dahulu.'}
@@ -646,7 +874,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[var(--nv-accent)] px-5 py-2.5 text-sm font-semibold text-white"
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-[4px] bg-[var(--nv-ui-accent)] px-5 py-2.5 text-xs font-bold text-[var(--nv-ui-accent-text)]"
               >
                 <Upload className="h-4 w-4" aria-hidden="true" />
                 <span>Pilih File EPUB</span>
@@ -654,7 +882,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               <button
                 type="button"
                 onClick={() => folderInputRef.current?.click()}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-[var(--nv-border)] px-4 py-2.5 text-sm font-semibold"
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-[4px] border border-[var(--nv-chrome-border)] px-4 py-2.5 text-xs font-semibold"
               >
                 <FolderInput className="h-4 w-4" aria-hidden="true" />
                 <span>Pindai Folder</span>
@@ -662,22 +890,22 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             </div>
           </div>
         ) : groupedSeries ? (
-          <div className="space-y-8">
+          <div className="space-y-6">
             {groupedSeries.map((group) => (
               <section key={group.seriesName}>
-                <div className="mb-3 flex items-center justify-between border-b border-[var(--nv-border)] pb-2">
-                  <h2 className="font-reader-literata text-base font-bold">
+                <div className="mb-2.5 flex items-center justify-between border-b border-[var(--nv-chrome-border)] pb-1.5">
+                  <h2 className="text-sm font-bold text-[var(--nv-chrome-text)]">
                     {group.seriesName}
                   </h2>
-                  <span className="text-xs text-[var(--nv-muted)] tabular-nums">
+                  <span className="text-xs text-[var(--nv-chrome-muted)] tabular-nums">
                     {group.items.length} jilid
                   </span>
                 </div>
                 <div
                   className={
                     viewMode === 'list'
-                      ? 'space-y-3'
-                      : 'grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                      ? 'grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3'
+                      : 'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5'
                   }
                 >
                   {group.items.map(renderBookCard)}
@@ -689,8 +917,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           <div
             className={
               viewMode === 'list'
-                ? 'space-y-3'
-                : 'grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                ? 'grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3'
+                : 'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5'
             }
           >
             {filteredAndSorted.map(renderBookCard)}
@@ -720,11 +948,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
           onClick={() => setCollectionTargetBookId(null)}
         >
           <div
-            className="w-full max-w-sm rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-5 shadow-xl space-y-4"
+            className="w-full max-w-sm rounded-lg border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] p-5 text-[var(--nv-chrome-text)] shadow-xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-base font-bold">Koleksi untuk "{collectionBook.title}"</h2>
@@ -742,10 +970,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                         : [...curr, col];
                       void onUpdateBookMetadata({ ...collectionBook, collections: nextCols });
                     }}
-                    className={`min-h-[36px] rounded-xl border px-3 text-xs font-medium ${
+                    className={`min-h-[36px] rounded-[4px] border px-3 text-xs font-medium ${
                       active
-                        ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                        : 'border-[var(--nv-border)]'
+                        ? 'border-[var(--nv-gold)] bg-[var(--nv-gold)]/15 text-[var(--nv-gold)]'
+                        : 'border-[var(--nv-chrome-border)]'
                     }`}
                   >
                     {active ? '✓ ' : '+ '}
@@ -775,11 +1003,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 value={newCollectionText}
                 onChange={(e) => setNewCollectionText(e.target.value)}
                 placeholder="Buat koleksi baru..."
-                className="min-h-[40px] flex-1 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs"
+                className="min-h-[40px] flex-1 rounded-[4px] border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-bg)] px-3 text-xs"
               />
               <button
                 type="submit"
-                className="min-h-[40px] rounded-xl bg-[var(--nv-accent)] px-3.5 text-xs font-semibold text-white"
+                className="min-h-[40px] rounded-[4px] bg-[var(--nv-ui-accent)] px-3.5 text-xs font-bold text-[var(--nv-ui-accent-text)]"
               >
                 Tambah
               </button>
@@ -788,7 +1016,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               <button
                 type="button"
                 onClick={() => setCollectionTargetBookId(null)}
-                className="min-h-[40px] rounded-xl border border-[var(--nv-border)] px-4 text-xs font-medium"
+                className="min-h-[40px] rounded-[4px] border border-[var(--nv-chrome-border)] px-4 text-xs font-medium"
               >
                 Selesai
               </button>
@@ -803,11 +1031,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           role="dialog"
           aria-modal="true"
           aria-label="Cadangkan dan Pulihkan Data"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
           onClick={() => setShowBackupModal(false)}
         >
           <div
-            className="w-full max-w-sm rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-5 shadow-xl space-y-4"
+            className="w-full max-w-sm rounded-lg border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] p-5 text-[var(--nv-chrome-text)] shadow-xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -816,12 +1044,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 type="button"
                 onClick={() => setShowBackupModal(false)}
                 aria-label="Tutup dialog cadangan"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg"
+                className="inline-flex h-8 w-8 items-center justify-center rounded"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <p className="text-xs leading-relaxed text-[var(--nv-muted)]">
+            <p className="text-xs leading-relaxed text-[var(--nv-chrome-muted)]">
               Ekspor atau pulihkan posisi baca terakhir, penanda, kutipan, catatan, preset tampilan, dan setelan TTS Anda ke berkas JSON.
             </p>
             <div className="space-y-2">
@@ -831,7 +1059,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   void onExportBackup();
                   setShowBackupModal(false);
                 }}
-                className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-[var(--nv-accent)] px-4 text-sm font-semibold text-white"
+                className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[4px] bg-[var(--nv-teal)] px-4 text-sm font-semibold text-[var(--nv-teal-text)]"
               >
                 <Download className="h-4 w-4" />
                 <span>Ekspor Cadangan (.json)</span>
@@ -839,11 +1067,92 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               <button
                 type="button"
                 onClick={() => backupInputRef.current?.click()}
-                className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border border-[var(--nv-border)] px-4 text-sm font-semibold"
+                className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[4px] border border-[var(--nv-chrome-border)] px-4 text-sm font-semibold"
               >
                 <Upload className="h-4 w-4" />
                 <span>Pulihkan dari File (.json)</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Setelan Warna & Tampilan UI Modal */}
+      {showThemeSettingsModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Setelan Tampilan dan Warna UI"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
+          onClick={() => setShowThemeSettingsModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] text-[var(--nv-chrome-text)] shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between bg-[var(--nv-teal)] px-4 py-3 text-[var(--nv-teal-text)]">
+              <div className="flex items-center gap-2">
+                <Palette className="h-4 w-4" aria-hidden="true" />
+                <h2 className="text-sm font-bold tracking-wide">Setelan Tampilan &amp; Warna UI</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowThemeSettingsModal(false)}
+                aria-label="Tutup setelan warna UI"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/10"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-5 p-4">
+              <div>
+                <p className="mb-2 text-xs font-semibold text-[var(--nv-chrome-text)]">
+                  Mode Tema Aplikasi &amp; Layar Baca
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: 'light', label: 'Siang' },
+                      { id: 'sepia', label: 'Sepia' },
+                      { id: 'twilight', label: 'Senja' },
+                      { id: 'dark', label: 'Malam' },
+                      { id: 'amoled', label: 'AMOLED' },
+                      { id: 'custom', label: 'Kustom' },
+                    ] as Array<{ id: ReaderTheme; label: string }>
+                  ).map((t) => {
+                    const active = theme === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => onChangeTheme(t.id)}
+                        className={`min-h-[38px] rounded-[4px] border px-2 text-xs font-semibold transition-colors ${
+                          active
+                            ? 'border-[var(--nv-ui-accent)] bg-[var(--nv-ui-accent)]/15 text-[var(--nv-ui-accent)]'
+                            : 'border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-bg)]'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="border-t border-[var(--nv-chrome-border)] pt-4">
+                <UiColorCustomizer value={uiColor} onChange={onChangeUiColor} />
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowThemeSettingsModal(false)}
+                  className="min-h-[40px] rounded-[4px] bg-[var(--nv-ui-accent)] px-5 text-xs font-bold text-[var(--nv-ui-accent-text)]"
+                >
+                  Selesai
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -855,20 +1164,20 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           role="dialog"
           aria-modal="true"
           aria-labelledby="delete-book-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
         >
-          <div className="w-full max-w-sm rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-5 shadow-xl">
+          <div className="w-full max-w-sm rounded-lg border border-[var(--nv-chrome-border)] bg-[var(--nv-chrome-card)] p-5 text-[var(--nv-chrome-text)] shadow-xl">
             <h2 id="delete-book-title" className="text-base font-bold">
               Hapus buku dari rak?
             </h2>
-            <p className="mt-2 text-sm text-[var(--nv-muted)]">
+            <p className="mt-2 text-sm text-[var(--nv-chrome-muted)]">
               "{pendingBook.title}" beserta posisi baca, penanda, dan kutipannya akan dihapus dari perangkat.
             </p>
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setPendingDeleteId(null)}
-                className="min-h-[44px] rounded-xl border border-[var(--nv-border)] px-4 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5"
+                className="min-h-[44px] rounded-[4px] border border-[var(--nv-chrome-border)] px-4 text-sm font-medium hover:bg-white/5"
               >
                 Batal
               </button>
@@ -878,7 +1187,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   onDeleteBook(pendingBook.id);
                   setPendingDeleteId(null);
                 }}
-                className="min-h-[44px] rounded-xl bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-700"
+                className="min-h-[44px] rounded-[4px] bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-700"
               >
                 Hapus
               </button>
@@ -886,6 +1195,66 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           </div>
         </div>
       )}
+      {/* Menu Setelan Utama dari Layar Depan */}
+      <MainSettingsModal
+        open={showMainSettings}
+        readerSettings={readerSettings}
+        ttsSettings={ttsSettings}
+        onUpdateReaderSettings={onUpdateReaderSettings}
+        onOpenReaderAppearance={() => setShowAppearanceFromHome(true)}
+        onOpenTtsSettings={() => setShowTtsFromHome(true)}
+        onScanFolder={() => {
+          setShowMainSettings(false);
+          folderInputRef.current?.click();
+        }}
+        onExportBackup={onExportBackup}
+        onTriggerRestoreBackup={() => backupInputRef.current?.click()}
+        onResetAllSettings={onResetAllSettings}
+        onClose={() => setShowMainSettings(false)}
+      />
+
+      <AppearanceSheet
+        open={showAppearanceFromHome}
+        settings={readerSettings}
+        customFonts={customFonts}
+        presets={presets}
+        onUpdate={onUpdateReaderSettings}
+        onImportCustomFont={onImportCustomFont}
+        onDeleteCustomFont={onDeleteCustomFont}
+        onSavePreset={onSavePreset}
+        onApplyPreset={onApplyPreset}
+        onDeletePreset={onDeletePreset}
+        onClose={() => setShowAppearanceFromHome(false)}
+      />
+
+      <TtsSettingsSheet
+        open={showTtsFromHome}
+        settings={ttsSettings}
+        voices={voices}
+        engineCapabilities={engineCapabilities}
+        notificationStatus={notificationStatus}
+        sleepRemainingSec={null}
+        onUpdate={onUpdateTtsSettings}
+        onPreviewVoice={(voiceURI) =>
+          void previewVoiceSample(
+            voiceURI,
+            ttsSettings.rate,
+            ttsSettings.pitch,
+            ttsSettings.volume ?? 1.0
+          )
+        }
+        onRefreshVoices={async () => {
+          const v = await getSystemVoices();
+          setVoices(v);
+        }}
+        onOpenAndroidTtsSettings={openNativeTtsSettings}
+        onOpenBatteryOptimization={openBatteryOptimizationSettings}
+        onRequestNotificationPermission={async () => {
+          const granted = await requestAndroidNotificationPermission();
+          setNotificationStatus((prev) => ({ ...prev, granted }));
+        }}
+        onClose={() => setShowTtsFromHome(false)}
+      />
     </div>
   );
 };

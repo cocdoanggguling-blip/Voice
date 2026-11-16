@@ -1,18 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import {
-  ArrowDownCircle,
   ChevronsLeft,
   ChevronsRight,
   LayoutGrid,
-  Lock,
-  LockOpen,
   Moon,
   Pause,
+  Pin,
   Play,
+  RefreshCw,
   SkipBack,
   SkipForward,
   SlidersHorizontal,
-  Volume2,
 } from 'lucide-react';
 import type { ChapterMeta, OrientationLockMode, TtsReadingMode } from '../types/reader';
 import type { BookVirtualPageSummary } from '../utils/bookMetrics';
@@ -73,12 +71,12 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
   onToggleQuickMenu,
   onToggleAutoScroll,
   onCycleOrientation,
-  onToggleTtsBar,
   onOpenTtsSettings,
 }) => {
   const [draggingPage, setDraggingPage] = useState<number | null>(null);
 
-  const previewPage = draggingPage ?? bookVirtualPage;
+  const safeTotalPages = Math.max(1, totalVirtualPages);
+  const previewPage = Math.min(Math.max(1, draggingPage ?? bookVirtualPage), safeTotalPages);
 
   const draggingTooltip = useMemo(() => {
     if (draggingPage === null || !virtualSummary) return null;
@@ -91,11 +89,11 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
     return `Hal. ${draggingPage}`;
   }, [chapters, draggingPage, virtualSummary]);
 
-  // Sample chapter tick positions (up to 48 ticks visually clean even for 200+ chapters)
+  // Dense fine chapter tick marks along the bottom seekbar
   const chapterTickRatios = useMemo(() => {
     if (!virtualSummary || virtualSummary.totalVirtualPages <= 1) return [];
     const spans = virtualSummary.chapters;
-    const step = Math.max(1, Math.ceil(spans.length / 48));
+    const step = Math.max(1, Math.ceil(spans.length / 72));
     const ratios: number[] = [];
     for (let i = 0; i < spans.length; i += step) {
       const r = (spans[i].startVirtualPage - 1) / Math.max(1, virtualSummary.totalVirtualPages - 1);
@@ -107,26 +105,39 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
   const safeTotalSentences = Math.max(1, totalSentences);
   const displaySentence = Math.min(safeTotalSentences, currentSentenceIndex + 1);
   const showMiniPlayer = isPlaying || ttsBarExpanded;
+  const seekPercent =
+    safeTotalPages <= 1 ? 0 : Math.min(100, Math.max(0, ((previewPage - 1) / (safeTotalPages - 1)) * 100));
+  const clampedChapterPct = Math.max(0, Math.min(100, chapterProgressPercent));
 
   return (
     <div className="sticky bottom-0 z-30">
-      {/* Thin Chapter Progress Line Always Visible Under Text */}
-      <div className="h-[3px] w-full bg-[var(--nv-border)]/50">
-        <div
-          className="h-full bg-[var(--nv-accent)] transition-all duration-150"
-          style={{ width: `${Math.max(0, Math.min(100, chapterProgressPercent))}%` }}
-        />
+      {/* Razor-thin Chapter Progress Line Always Visible Under Text */}
+      <div className="mx-auto max-w-5xl px-3 py-1">
+        <div className="relative flex h-[2px] w-full items-center rounded-full bg-[var(--nv-border)]/50">
+          <span
+            aria-hidden="true"
+            className="absolute left-0 h-1.5 w-1.5 -translate-x-0.5 rounded-full bg-[#7a7a7a]"
+          />
+          <div
+            className="h-full rounded-full bg-[#7a7a7a] transition-all duration-150"
+            style={{ width: `${clampedChapterPct}%` }}
+          />
+          <span
+            aria-hidden="true"
+            className="absolute right-0 h-1.5 w-1.5 translate-x-0.5 rounded-full bg-[#7a7a7a]/60"
+          />
+        </div>
       </div>
 
-      {/* Expandable / Active TTS Mini-Player */}
+      {/* Expandable / Active TTS Mini-Player in Deep Teal */}
       {showMiniPlayer && (
-        <div className="border-t border-[var(--nv-border)] bg-[var(--nv-surface)]/95 backdrop-blur-md">
-          <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-3 py-1.5 sm:px-5">
+        <div className="border-t border-white/10 bg-[var(--nv-teal-deep)] text-white shadow-lg">
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-3 py-2 sm:px-5">
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold tabular-nums">
+              <p className="truncate text-xs font-semibold tabular-nums text-white">
                 Kalimat {displaySentence} / {totalSentences}
               </p>
-              <p className="truncate text-[11px] text-[var(--nv-muted)] tabular-nums">
+              <p className="truncate text-[11px] text-white/75 tabular-nums">
                 {rate.toFixed(1)}× · {readingMode === 'flowing' ? 'Mengalir' : 'Per kalimat'}
                 {sleepRemainingSec !== null && (
                   <>
@@ -145,7 +156,7 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
                 type="button"
                 onClick={onPrevParagraph}
                 aria-label="Paragraf sebelumnya"
-                className="hidden sm:inline-flex h-10 w-9 items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+                className="hidden sm:inline-flex h-10 w-9 items-center justify-center rounded-lg text-white/90 hover:bg-white/10"
               >
                 <ChevronsLeft className="h-4 w-4" />
               </button>
@@ -153,7 +164,7 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
                 type="button"
                 onClick={onPrevSentence}
                 aria-label="Kalimat sebelumnya"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-white/90 hover:bg-white/10"
               >
                 <SkipBack className="h-4 w-4" />
               </button>
@@ -161,7 +172,7 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
                 type="button"
                 onClick={onTogglePlay}
                 aria-label={isPlaying ? 'Jeda pembacaan TTS' : 'Mulai pembacaan TTS'}
-                className="inline-flex h-10 w-11 items-center justify-center rounded-xl bg-[var(--nv-accent)] text-white shadow-sm"
+                className="inline-flex h-10 w-11 items-center justify-center rounded-lg bg-[var(--nv-ui-bar-highlight)] text-[var(--nv-ui-bar-highlight-text)] shadow-sm hover:brightness-105"
               >
                 {isPlaying ? (
                   <Pause className="h-4 w-4 fill-current" />
@@ -173,7 +184,7 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
                 type="button"
                 onClick={onNextSentence}
                 aria-label="Kalimat berikutnya"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-white/90 hover:bg-white/10"
               >
                 <SkipForward className="h-4 w-4" />
               </button>
@@ -181,7 +192,7 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
                 type="button"
                 onClick={onNextParagraph}
                 aria-label="Paragraf berikutnya"
-                className="hidden sm:inline-flex h-10 w-9 items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+                className="hidden sm:inline-flex h-10 w-9 items-center justify-center rounded-lg text-white/90 hover:bg-white/10"
               >
                 <ChevronsRight className="h-4 w-4" />
               </button>
@@ -192,7 +203,7 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
                 type="button"
                 onClick={onOpenTtsSettings}
                 aria-label="Pengaturan suara TTS"
-                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-2.5 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 whitespace-nowrap"
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-white/25 bg-white/10 px-2.5 text-xs font-semibold text-white hover:bg-white/20 whitespace-nowrap"
               >
                 <SlidersHorizontal className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Suara</span>
@@ -202,25 +213,86 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
         </div>
       )}
 
-      {/* Main Reader Bottom Bar (Hidden in Immersive Mode) */}
+      {/* Main Reader Bottom Teal Bar (Hidden in Immersive Mode) */}
       {visible && (
-        <footer className="border-t border-[var(--nv-border)] bg-[var(--nv-surface)]/95 backdrop-blur-md pb-safe">
-          <div className="mx-auto max-w-5xl px-3 pt-2 pb-2 sm:px-5">
-            {/* Long Seekbar with Chapter Tick Markers & Drag Tooltip */}
-            <div className="relative mb-1.5 flex items-center">
+        <footer className="bg-[var(--nv-teal)] text-[var(--nv-teal-text)] shadow-[0_-2px_10px_rgba(0,0,0,0.28)] pb-safe">
+          <div className="mx-auto max-w-5xl px-3 pt-1.5 pb-2.5 sm:px-5">
+            {/* Top Row: Quick Menu (left), "176 dari 1086" (center), Auto-Scroll + Orientation Pin (right) */}
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <div className="flex min-w-[84px] items-center justify-start">
+                <button
+                  type="button"
+                  onClick={onToggleQuickMenu}
+                  aria-label="Menu cepat pembacaan"
+                  title="Menu Cepat"
+                  className="inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg text-[var(--nv-teal-text)]/80 hover:bg-white/10 hover:text-[var(--nv-teal-text)]"
+                >
+                  <LayoutGrid className="h-[18px] w-[18px]" aria-hidden="true" />
+                </button>
+              </div>
+
+              <span className="text-sm font-medium tracking-tight text-[var(--nv-teal-text)] tabular-nums whitespace-nowrap">
+                {previewPage} dari {safeTotalPages}
+              </span>
+
+              <div className="flex min-w-[84px] items-center justify-end gap-1">
+                <button
+                  type="button"
+                  onClick={onToggleAutoScroll}
+                  aria-label="Gulir otomatis"
+                  aria-pressed={autoScrollEnabled}
+                  title={autoScrollEnabled ? 'Matikan gulir otomatis' : 'Aktifkan gulir otomatis'}
+                  className={`inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg transition-colors ${
+                    autoScrollEnabled
+                      ? 'bg-white/15 text-[var(--nv-ui-bar-highlight)]'
+                      : 'text-[var(--nv-teal-text)]/80 hover:bg-white/10 hover:text-[var(--nv-teal-text)]'
+                  }`}
+                >
+                  <RefreshCw className="h-[18px] w-[18px]" aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onCycleOrientation}
+                  aria-label={`Kunci orientasi: ${orientationLock}`}
+                  title={`Orientasi: ${
+                    orientationLock === 'auto'
+                      ? 'Otomatis'
+                      : orientationLock === 'portrait'
+                        ? 'Potret'
+                        : 'Lanskap'
+                  }`}
+                  className={`inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg transition-colors ${
+                    orientationLock !== 'auto'
+                      ? 'bg-white/15 text-[var(--nv-ui-bar-highlight)]'
+                      : 'text-[var(--nv-teal-text)]/80 hover:bg-white/10 hover:text-[var(--nv-teal-text)]'
+                  }`}
+                >
+                  <Pin
+                    className={`h-[18px] w-[18px] ${
+                      orientationLock !== 'auto' ? '' : 'rotate-45'
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Bottom Row: Full-Width Cyan Seekbar with Chapter Tick Marks & Drag Tooltip */}
+            <div className="relative flex items-center">
               {draggingTooltip && (
-                <div className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-text)] px-3 py-1 text-xs font-semibold text-[var(--nv-bg)] shadow-lg whitespace-nowrap">
+                <div className="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 rounded-[4px] border border-white/15 bg-[var(--nv-sheet-bg)] px-3 py-1 text-xs font-semibold text-[var(--nv-text)] shadow-xl whitespace-nowrap">
                   {draggingTooltip}
                 </div>
               )}
               <div className="relative flex w-full items-center">
-                {/* Chapter Tick Marks Behind Slider */}
-                <div className="pointer-events-none absolute inset-x-2 top-1/2 flex h-2 -translate-y-1/2 items-center">
+                {/* Chapter Tick Marks Behind Cyan Slider */}
+                <div className="pointer-events-none absolute inset-x-1.5 top-1/2 flex h-2 -translate-y-1/2 items-center">
                   {chapterTickRatios.map((leftPct, idx) => (
                     <span
                       key={idx}
                       style={{ left: `${leftPct}%` }}
-                      className="absolute h-2 w-[1.5px] -translate-x-1/2 bg-[var(--nv-muted)]/45"
+                      className="absolute h-1.5 w-[1px] -translate-x-1/2 bg-white/35"
                     />
                   ))}
                 </div>
@@ -228,8 +300,8 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
                   type="range"
                   aria-label="Posisi halaman virtual buku"
                   min={1}
-                  max={Math.max(1, totalVirtualPages)}
-                  value={Math.min(Math.max(1, previewPage), Math.max(1, totalVirtualPages))}
+                  max={safeTotalPages}
+                  value={previewPage}
                   onChange={(e) => setDraggingPage(Number(e.target.value))}
                   onMouseUp={() => {
                     if (draggingPage !== null) {
@@ -249,84 +321,13 @@ export const ReaderControlsBar: React.FC<ReaderControlsBarProps> = ({
                       setDraggingPage(null);
                     }
                   }}
-                  className="relative z-10 h-5 w-full cursor-pointer accent-[var(--nv-accent)] bg-transparent"
+                  style={{
+                    background: `linear-gradient(to right, var(--nv-ui-bar-highlight) ${seekPercent}%, rgba(255,255,255,0.28) ${seekPercent}%)`,
+                    height: '3px',
+                    borderRadius: '9999px',
+                  }}
+                  className="nv-range nv-range-cyan relative z-10 w-full cursor-pointer"
                 />
-              </div>
-            </div>
-
-            {/* Bottom Controls Row: Quick Menu, "176 dari 1086", Auto-scroll, Orientation Lock, TTS */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={onToggleQuickMenu}
-                  aria-label="Menu cepat pembacaan"
-                  title="Menu Cepat"
-                  className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
-                >
-                  <LayoutGrid className="h-4 w-4" aria-hidden="true" />
-                </button>
-
-                <span className="px-1 text-xs font-semibold tabular-nums whitespace-nowrap">
-                  {previewPage} dari {Math.max(1, totalVirtualPages)}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={onToggleAutoScroll}
-                  aria-label="Gulir otomatis"
-                  aria-pressed={autoScrollEnabled}
-                  title={autoScrollEnabled ? 'Matikan gulir otomatis' : 'Aktifkan gulir otomatis'}
-                  className={`inline-flex min-h-[40px] items-center gap-1 rounded-xl px-2.5 text-xs font-medium ${
-                    autoScrollEnabled
-                      ? 'bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                      : 'hover:bg-black/5 dark:hover:bg-white/5'
-                  }`}
-                >
-                  <ArrowDownCircle className="h-4 w-4" aria-hidden="true" />
-                  <span className="hidden sm:inline">Auto</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onCycleOrientation}
-                  aria-label={`Kunci orientasi: ${orientationLock}`}
-                  title={`Orientasi: ${
-                    orientationLock === 'auto'
-                      ? 'Otomatis'
-                      : orientationLock === 'portrait'
-                        ? 'Potret'
-                        : 'Lanskap'
-                  }`}
-                  className={`inline-flex min-h-[40px] items-center gap-1 rounded-xl px-2.5 text-xs font-medium ${
-                    orientationLock !== 'auto'
-                      ? 'bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                      : 'hover:bg-black/5 dark:hover:bg-white/5'
-                  }`}
-                >
-                  {orientationLock === 'auto' ? (
-                    <LockOpen className="h-4 w-4" aria-hidden="true" />
-                  ) : (
-                    <Lock className="h-4 w-4" aria-hidden="true" />
-                  )}
-                  <span className="hidden sm:inline capitalize">{orientationLock}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onToggleTtsBar}
-                  aria-label="Buka atau tutup kontrol TTS"
-                  className={`inline-flex min-h-[40px] items-center gap-1 rounded-xl px-2.5 text-xs font-semibold ${
-                    showMiniPlayer
-                      ? 'bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                      : 'hover:bg-black/5 dark:hover:bg-white/5'
-                  }`}
-                >
-                  <Volume2 className="h-4 w-4" aria-hidden="true" />
-                  <span>TTS</span>
-                </button>
               </div>
             </div>
           </div>

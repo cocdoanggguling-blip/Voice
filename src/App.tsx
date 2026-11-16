@@ -4,6 +4,8 @@ import { ReaderView } from './components/ReaderView';
 import { parseEpubMetadata } from './services/epubService';
 import { ensureSampleBooksSeeded } from './services/sampleBooks';
 import {
+  DEFAULT_READER_SETTINGS,
+  DEFAULT_TTS_SETTINGS,
   deleteBook,
   deleteCustomFont,
   exportBackupJson,
@@ -22,6 +24,7 @@ import {
   updateBookMetadata,
 } from './services/storageService';
 import { consumePendingAndroidOpenEpub } from './services/ttsBridge';
+import { buildUiThemeVars, hexToRgb, normalizeHexColor } from './utils/uiTheme';
 import type {
   BookMetadata,
   CustomFontRecord,
@@ -66,11 +69,30 @@ export default function App() {
       'theme-amoled',
       'theme-custom'
     );
-    root.style.removeProperty('--nv-bg');
-    root.style.removeProperty('--nv-surface');
-    root.style.removeProperty('--nv-text');
-    root.style.removeProperty('--nv-muted');
-    root.style.removeProperty('--nv-accent');
+    const managedVars = [
+      '--nv-bg',
+      '--nv-surface',
+      '--nv-text',
+      '--nv-muted',
+      '--nv-accent',
+      '--nv-accent-soft',
+      '--nv-teal',
+      '--nv-teal-deep',
+      '--nv-teal-text',
+      '--nv-gold',
+      '--nv-cyan',
+      '--nv-ui-accent',
+      '--nv-ui-accent-text',
+      '--nv-ui-bar-highlight',
+      '--nv-ui-bar-highlight-text',
+      '--nv-chrome-bg',
+      '--nv-chrome-card',
+      '--nv-chrome-border',
+      '--nv-sheet-row-active',
+    ];
+    for (const v of managedVars) {
+      root.style.removeProperty(v);
+    }
 
     if (readerSettings.theme === 'dark') {
       root.classList.add('dark', 'theme-dark');
@@ -82,17 +104,38 @@ export default function App() {
       root.classList.add('theme-sepia');
     } else if (readerSettings.theme === 'custom') {
       root.classList.add('theme-custom');
+      const customAccentRgb = hexToRgb(normalizeHexColor(readerSettings.customAccent));
       root.style.setProperty('--nv-bg', readerSettings.customBg);
       root.style.setProperty('--nv-surface', readerSettings.customBg);
       root.style.setProperty('--nv-text', readerSettings.customText);
       root.style.setProperty('--nv-muted', readerSettings.customText);
       root.style.setProperty('--nv-accent', readerSettings.customAccent);
+      root.style.setProperty(
+        '--nv-accent-soft',
+        `rgba(${customAccentRgb.r}, ${customAccentRgb.g}, ${customAccentRgb.b}, 0.2)`
+      );
+    }
+
+    const uiVars = buildUiThemeVars(
+      readerSettings.uiColor,
+      readerSettings.theme,
+      readerSettings.customBg
+    );
+    for (const [key, value] of Object.entries(uiVars)) {
+      if (
+        readerSettings.theme === 'custom' &&
+        (key === '--nv-accent' || key === '--nv-accent-soft')
+      ) {
+        continue;
+      }
+      root.style.setProperty(key, value);
     }
   }, [
     readerSettings.customAccent,
     readerSettings.customBg,
     readerSettings.customText,
     readerSettings.theme,
+    readerSettings.uiColor,
   ]);
 
   const handleImportFiles = useCallback(async (rawFiles: FileList | File[]) => {
@@ -213,6 +256,14 @@ export default function App() {
     });
   }, []);
 
+  const handleResetAllSettings = useCallback(() => {
+    saveReaderSettings(DEFAULT_READER_SETTINGS);
+    saveTtsSettings(DEFAULT_TTS_SETTINGS);
+    setReaderSettings(DEFAULT_READER_SETTINGS);
+    setTtsSettings(DEFAULT_TTS_SETTINGS);
+    setImportInfo('Semua setelan tampilan dan TTS dikembalikan ke bawaan.');
+  }, []);
+
   const handleImportCustomFont = useCallback(
     async (file: File) => {
       const lower = file.name.toLowerCase();
@@ -261,6 +312,7 @@ export default function App() {
         name,
         settings: {
           theme: readerSettings.theme,
+          uiColor: readerSettings.uiColor,
           customBg: readerSettings.customBg,
           customText: readerSettings.customText,
           customAccent: readerSettings.customAccent,
@@ -380,6 +432,11 @@ export default function App() {
     <LibraryView
       books={books}
       theme={readerSettings.theme}
+      uiColor={readerSettings.uiColor}
+      readerSettings={readerSettings}
+      ttsSettings={ttsSettings}
+      customFonts={customFonts}
+      presets={presets}
       isLoading={isLoadingLibrary}
       isImporting={isImporting}
       importError={importError}
@@ -392,6 +449,15 @@ export default function App() {
       onUpdateBookMetadata={handleUpdateBookMetadata}
       onDeleteBook={(id) => void handleDeleteBook(id)}
       onChangeTheme={(theme) => handleUpdateReaderSettings({ theme })}
+      onChangeUiColor={(uiColor) => handleUpdateReaderSettings({ uiColor })}
+      onUpdateReaderSettings={handleUpdateReaderSettings}
+      onUpdateTtsSettings={handleUpdateTtsSettings}
+      onImportCustomFont={handleImportCustomFont}
+      onDeleteCustomFont={handleDeleteCustomFont}
+      onSavePreset={handleSavePreset}
+      onApplyPreset={handleApplyPreset}
+      onDeletePreset={handleDeletePreset}
+      onResetAllSettings={handleResetAllSettings}
       onExportBackup={handleExportBackup}
       onImportBackup={handleImportBackup}
     />

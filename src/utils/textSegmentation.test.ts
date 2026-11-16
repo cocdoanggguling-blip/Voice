@@ -8,6 +8,7 @@ import {
   findLocationAtChapterOffset,
   findSentenceStartForOffset,
   mapChunkLocalOffsetToChapterOffset,
+  normalizeBookLocale,
   preprocessSpeechText,
   segmentParagraphs,
   splitIntoSentences,
@@ -234,4 +235,52 @@ test('commaPauseMs splits comma clauses in sentence mode when SSML is unsupporte
   const loc = findLocationAtChapterOffset(allSentences, chunks[2].chapterStartChar);
   assert.equal(loc.sentenceIndex, 1);
 });
+
+test('normalizeBookLocale converts invalid or human-readable EPUB language tags like "bahasa Indonesia" safely', () => {
+  assert.equal(normalizeBookLocale('bahasa Indonesia'), 'id');
+  assert.equal(normalizeBookLocale('Bahasa Indonesia'), 'id');
+  assert.equal(normalizeBookLocale('Indonesian'), 'id');
+  assert.equal(normalizeBookLocale('ind'), 'id');
+  assert.equal(normalizeBookLocale('in-ID'), 'id-ID');
+  assert.equal(normalizeBookLocale('Bahasa Melayu'), 'ms');
+  assert.equal(normalizeBookLocale('English'), 'en');
+  assert.equal(normalizeBookLocale('en_US'), 'en-US');
+  assert.equal(normalizeBookLocale('unknown-garbage-tag-999'), 'id');
+  assert.equal(normalizeBookLocale(''), 'id');
+
+  // Verify splitIntoSentences & segmentParagraphs never throw RangeError on 'bahasa Indonesia'
+  const sentences = splitIntoSentences('Halo dunia. Ini bab kedua!', 'bahasa Indonesia');
+  assert.equal(sentences.length, 2);
+  const seg = segmentParagraphs([{ tag: 'p', text: 'Kalimat satu. Kalimat dua.' }], 'bahasa Indonesia');
+  assert.equal(seg.allSentences.length, 2);
+});
+
+test('every character offset inside a period-to-period sentence resolves strictly to that whole sentence', () => {
+  const { allSentences } = segmentParagraphs(
+    [
+      {
+        tag: 'p',
+        text: 'Tn. Bima berjalan menuju dermaga tua sebelum fajar tiba. Angin laut bertiup kencang membawa aroma garam. Kapal kayu segera melepas sauh.',
+      },
+      {
+        tag: 'p',
+        text: 'Di kejauhan, mercusuar berkedip tenang menembus kabut pagi.',
+      },
+    ],
+    'id'
+  );
+
+  assert.equal(allSentences.length, 4);
+  for (const sentence of allSentences) {
+    for (let offset = sentence.chapterStartChar; offset <= sentence.chapterEndChar; offset++) {
+      const loc = findLocationAtChapterOffset(allSentences, offset);
+      assert.equal(
+        loc.sentenceIndex,
+        sentence.globalIndex,
+        `Offset ${offset} inside "${sentence.text}" must resolve to sentence ${sentence.globalIndex}`
+      );
+    }
+  }
+});
+
 

@@ -32,11 +32,11 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
     <div
       role="dialog"
       aria-label="Popup Terjemahan"
-      className="fixed bottom-28 left-1/2 z-40 w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] p-4 text-[var(--nv-text)] shadow-2xl"
+      className="fixed bottom-28 left-1/2 z-40 w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] p-4 text-[var(--nv-text)] shadow-2xl"
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs font-semibold text-[var(--nv-muted)]">
-          <Languages className="h-4 w-4 text-[var(--nv-accent)]" aria-hidden="true" />
+          <Languages className="h-4 w-4 text-[var(--nv-cyan)]" aria-hidden="true" />
           <span>Terjemahan</span>
           {result?.provider && (
             <span>· {result.provider === 'libretranslate' ? 'LibreTranslate' : 'MyMemory'}</span>
@@ -49,7 +49,7 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
             aria-label="Pilih bahasa tujuan terjemahan"
             value={targetLang}
             onChange={(e) => onChangeTargetLang(e.target.value as TargetLanguageCode)}
-            className="min-h-[36px] rounded-lg border border-[var(--nv-border)] bg-[var(--nv-bg)] px-2 text-xs font-medium"
+            className="min-h-[36px] rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-2 text-xs font-medium"
           >
             {TARGET_LANGUAGES.map((l) => (
               <option key={l.code} value={l.code}>
@@ -62,7 +62,7 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Tutup popup terjemahan"
-            className="inline-flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5"
+            className="inline-flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg hover:bg-white/10"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -75,12 +75,12 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
         {loading ? (
           <p className="text-sm text-[var(--nv-muted)]">Menerjemahkan...</p>
         ) : result?.offline ? (
-          <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+          <div className="flex items-center gap-2 text-sm text-amber-300">
             <WifiOff className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span>{result.error}</span>
           </div>
         ) : result && !result.ok ? (
-          <p className="text-sm text-red-600 dark:text-red-400">{result.error}</p>
+          <p className="text-sm text-red-400">{result.error}</p>
         ) : (
           <p className="font-reader-literata text-base leading-relaxed font-medium">
             {result?.translatedText}
@@ -93,9 +93,9 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
           <button
             type="button"
             onClick={() => onSpeakTranslation(result.translatedText, targetLang)}
-            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-[var(--nv-border)] px-3 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5"
+            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 text-xs font-semibold hover:brightness-110"
           >
-            <Volume2 className="h-3.5 w-3.5 text-[var(--nv-accent)]" aria-hidden="true" />
+            <Volume2 className="h-3.5 w-3.5 text-[var(--nv-cyan)]" aria-hidden="true" />
             <span>Bacakan Terjemahan</span>
           </button>
         )}
@@ -107,7 +107,7 @@ export const TranslationPopup: React.FC<TranslationPopupProps> = ({
               onReadFromHere(sentenceIndex);
               onClose();
             }}
-            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-[var(--nv-accent)] px-3.5 text-xs font-semibold text-white hover:opacity-90"
+            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[var(--nv-ui-accent)] px-3.5 text-xs font-bold text-[var(--nv-ui-accent-text)] hover:brightness-105"
           >
             <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
             <span>Baca dari kalimat ini</span>

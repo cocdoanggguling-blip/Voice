@@ -96,6 +96,7 @@ export interface CustomFontRecord {
 
 export interface ReaderSettings {
   theme: ReaderTheme;
+  uiColor: string;
   customBg: string;
   customText: string;
   customAccent: string;

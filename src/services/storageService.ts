@@ -11,6 +11,7 @@ import type {
   TtsSettings,
 } from '../types/reader';
 import { DEFAULT_FIND_REPLACE_SETTINGS } from '../utils/textReplace';
+import { DEFAULT_UI_COLOR, normalizeHexColor } from '../utils/uiTheme';
 
 interface NovelVoiceDB extends DBSchema {
   books: {
@@ -71,10 +72,11 @@ const PRESETS_KEY = 'novelvoice_reader_presets_v1';
 const SEEDED_FLAG_KEY = 'novelvoice_samples_seeded_v1';
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
-  theme: 'light',
+  theme: 'twilight',
+  uiColor: DEFAULT_UI_COLOR,
   customBg: '#faf6ee',
   customText: '#231f20',
-  customAccent: '#b45309',
+  customAccent: '#06b6d4',
   font: 'literata',
   fontSize: 18,
   fontWeight: 400,
@@ -90,7 +92,7 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   orientationLock: 'auto',
   keepScreenOn: false,
   brightness: 1.0,
-  brightnessCollapsed: true,
+  brightnessCollapsed: false,
   autoScrollEnabled: false,
   autoScrollSpeedPxPerSec: 28,
   targetLanguage: 'id',
@@ -433,6 +435,7 @@ export function loadReaderSettings(): ReaderSettings {
     return {
       ...DEFAULT_READER_SETTINGS,
       ...parsed,
+      uiColor: normalizeHexColor(parsed.uiColor, DEFAULT_UI_COLOR),
       lineHeightPercent,
       lineHeight: lineHeightPercent / 100,
       margins: {

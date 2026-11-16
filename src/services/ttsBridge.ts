@@ -135,6 +135,50 @@ export async function getSystemVoices(): Promise<TtsVoiceInfo[]> {
   });
 }
 
+export async function previewVoiceSample(
+  voiceURI: string,
+  rate = 1.0,
+  pitch = 1.0,
+  volume = 1.0,
+  sampleText = 'Halo, ini adalah pratinjau suara NovelVoice untuk membaca buku Anda.'
+): Promise<void> {
+  const clampedRate = Math.max(0.5, Math.min(3.0, rate));
+  const clampedPitch = Math.max(0.5, Math.min(2.0, pitch));
+  const clampedVol = Math.max(0.05, Math.min(1.0, volume));
+
+  if (Capacitor.isNativePlatform()) {
+    await NovelVoiceTts.stop().catch(() => undefined);
+    await NovelVoiceTts.configureSession({
+      voiceURI,
+      rate: clampedRate,
+      pitch: clampedPitch,
+    }).catch(() => undefined);
+    await NovelVoiceTts.speak({
+      text: sampleText,
+      utteranceId: `preview_main_${Date.now()}`,
+      queueMode: 0,
+      volume: clampedVol,
+    }).catch(() => undefined);
+    return;
+  }
+
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(sampleText);
+    utt.rate = clampedRate;
+    utt.pitch = clampedPitch;
+    utt.volume = clampedVol;
+    if (voiceURI) {
+      const match = window.speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI);
+      if (match) {
+        utt.voice = match;
+        utt.lang = match.lang;
+      }
+    }
+    window.speechSynthesis.speak(utt);
+  }
+}
+
 export async function openNativeTtsSettings(): Promise<{ opened: boolean; message?: string }> {
   if (Capacitor.isNativePlatform()) {
     try {

@@ -91,6 +91,131 @@ function shouldMergeSentenceBoundary(fullText: string, boundaryEndIndex: number)
   return false;
 }
 
+const LANGUAGE_ALIASES: Record<string, string> = {
+  'bahasa indonesia': 'id',
+  indonesia: 'id',
+  indonesian: 'id',
+  indo: 'id',
+  'bhs indonesia': 'id',
+  'bhs. indonesia': 'id',
+  ind: 'id',
+  in: 'id',
+  'bahasa melayu': 'ms',
+  melayu: 'ms',
+  malay: 'ms',
+  msa: 'ms',
+  zsm: 'ms',
+  may: 'ms',
+  english: 'en',
+  inggris: 'en',
+  eng: 'en',
+  japanese: 'ja',
+  jepang: 'ja',
+  jpn: 'ja',
+  chinese: 'zh',
+  mandarin: 'zh',
+  chi: 'zh',
+  zho: 'zh',
+  arabic: 'ar',
+  arab: 'ar',
+  ara: 'ar',
+  javanese: 'jv',
+  jawa: 'jv',
+  jav: 'jv',
+  sundanese: 'su',
+  sunda: 'su',
+  sun: 'su',
+};
+
+/**
+ * Normalizes arbitrary EPUB <dc:language> metadata strings (such as
+ * "bahasa Indonesia", "indonesian", "en_US", "in-ID", "und", etc.)
+ * into a canonical BCP-47 locale tag accepted by Intl APIs.
+ */
+export function normalizeBookLocale(rawLang?: string): string {
+  if (typeof rawLang !== 'string') return 'id';
+  const primary = rawLang.split(/[;,|]/)[0]?.trim() ?? '';
+  if (!primary) return 'id';
+
+  const lower = primary.toLowerCase().replace(/\s+/g, ' ');
+  if (LANGUAGE_ALIASES[lower]) {
+    return LANGUAGE_ALIASES[lower];
+  }
+
+  let candidate = primary.replace(/_/g, '-').trim();
+  const lowerHyphen = candidate.toLowerCase();
+  if (lowerHyphen === 'und' || lowerHyphen === 'unknown') {
+    return 'id';
+  }
+  if (lowerHyphen.startsWith('in-')) {
+    candidate = `id-${candidate.slice(3)}`;
+  }
+
+  if (typeof Intl !== 'undefined' && typeof Intl.getCanonicalLocales === 'function') {
+    try {
+      const canonical = Intl.getCanonicalLocales(candidate);
+      if (canonical.length > 0 && canonical[0].toLowerCase() !== 'und') {
+        return canonical[0];
+      }
+    } catch {
+      // Fallback via keyword match below
+    }
+  } else if (/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(candidate)) {
+    return candidate;
+  }
+
+  if (lower.includes('indonesia') || lower.includes('indo')) return 'id';
+  if (lower.includes('melayu') || lower.includes('malay')) return 'ms';
+  if (lower.includes('inggris') || lower.includes('english')) return 'en';
+  if (lower.includes('jepang') || lower.includes('japan')) return 'ja';
+  if (lower.includes('arab')) return 'ar';
+  if (lower.includes('mandarin') || lower.includes('china')) return 'zh';
+  return 'id';
+}
+
+interface SentenceSegmenterLike {
+  segment: (text: string) => Iterable<{ segment: string; index: number }>;
+}
+
+const sentenceSegmenterCache = new Map<string, SentenceSegmenterLike | null>();
+
+function getSentenceSegmenter(locale?: string): SentenceSegmenterLike | null {
+  if (typeof Intl === 'undefined' || !('Segmenter' in Intl)) {
+    return null;
+  }
+
+  const safeLocale = normalizeBookLocale(locale);
+  if (sentenceSegmenterCache.has(safeLocale)) {
+    return sentenceSegmenterCache.get(safeLocale) ?? null;
+  }
+
+  const SegmenterCtor = (
+    Intl as unknown as {
+      Segmenter: new (
+        loc: string,
+        opts: { granularity: 'sentence' }
+      ) => SentenceSegmenterLike;
+    }
+  ).Segmenter;
+
+  let segmenter: SentenceSegmenterLike | null = null;
+  try {
+    segmenter = new SegmenterCtor(safeLocale, { granularity: 'sentence' });
+  } catch {
+    try {
+      segmenter = new SegmenterCtor('id', { granularity: 'sentence' });
+    } catch {
+      segmenter = null;
+    }
+  }
+
+  if (sentenceSegmenterCache.size >= 16) {
+    sentenceSegmenterCache.clear();
+  }
+  sentenceSegmenterCache.set(safeLocale, segmenter);
+  return segmenter;
+}
+
 /**
  * Splits prose into sentence spans with exact UTF-16 offsets using Intl.Segmenter
  * (granularity: "sentence", locale "id") enhanced with abbreviation, decimal,
@@ -101,17 +226,9 @@ export function splitIntoSentencesWithOffsets(input: string, locale = 'id'): Sen
   if (!normalized) return [];
 
   const rawSpans: SentenceSpan[] = [];
+  const segmenter = getSentenceSegmenter(locale);
 
-  if (typeof Intl !== 'undefined' && 'Segmenter' in Intl) {
-    const SegmenterCtor = (
-      Intl as unknown as {
-        Segmenter: new (
-          loc: string,
-          opts: { granularity: 'sentence' }
-        ) => { segment: (text: string) => Iterable<{ segment: string; index: number }> };
-      }
-    ).Segmenter;
-    const segmenter = new SegmenterCtor(locale || 'id', { granularity: 'sentence' });
+  if (segmenter) {
     for (const seg of segmenter.segment(normalized)) {
       const leading = seg.segment.length - seg.segment.trimStart().length;
       const trimmed = seg.segment.trim();
@@ -795,7 +912,8 @@ export function estimateChunkDurationMs(text: string, rate: number): number {
 }
 
 export function detectLikelySourceLanguage(text: string, bookLangHint?: string): string {
-  const hint = (bookLangHint || '').toLowerCase().split('-')[0];
+  const normalizedHint = bookLangHint ? normalizeBookLocale(bookLangHint) : '';
+  const hint = normalizedHint.toLowerCase().split('-')[0];
   const sample = ` ${text.toLowerCase()} `;
 
   const idHits = (

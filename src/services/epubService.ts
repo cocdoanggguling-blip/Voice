@@ -17,7 +17,11 @@ import {
   type BookReplaceContext,
   type ChapterParagraphInput,
 } from '../utils/textReplace';
-import { segmentParagraphs, type ParagraphInputEntry } from '../utils/textSegmentation';
+import {
+  normalizeBookLocale,
+  segmentParagraphs,
+  type ParagraphInputEntry,
+} from '../utils/textSegmentation';
 
 export interface EpubReplaceOptions {
   rules: TextReplaceRule[];
@@ -166,11 +170,12 @@ export async function parseEpubMetadata(
     const cleanFallback = fileNameFallback.replace(/\.epub$/i, '').trim() || 'Buku Tanpa Judul';
     const metaDesc = (meta as unknown as { description?: string }).description;
 
+    const rawLang = typeof meta.language === 'string' ? meta.language : String(meta.language ?? '');
     return {
       id: idOverride ?? `book_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       title: meta.title?.trim() || cleanFallback,
       author: meta.creator?.trim() || 'Penulis Tidak Diketahui',
-      language: meta.language?.trim() || 'id',
+      language: normalizeBookLocale(rawLang),
       coverDataUrl,
       addedAt: Date.now(),
       lastReadAt: Date.now(),
@@ -324,26 +329,43 @@ async function loadChapterDocument(book: Book, chapterIndex: number): Promise<{
   if (!section) {
     return { rootElement: null, unload: () => undefined };
   }
-  const loaded = await section.load(book.load.bind(book));
-  let doc: Document | null = null;
-  if (loaded instanceof Document) {
-    doc = loaded;
-  } else if (typeof loaded === 'string') {
-    doc = new DOMParser().parseFromString(loaded, 'application/xhtml+xml');
-  } else if (loaded && typeof loaded === 'object' && 'body' in loaded) {
-    doc = (loaded as unknown as { ownerDocument?: Document }).ownerDocument ?? null;
-  }
-  const rootElement = doc?.body || (loaded instanceof Element ? loaded : null);
-  return {
-    rootElement,
-    unload: () => {
-      try {
-        section.unload();
-      } catch {
-        // Ignore unload errors
+  try {
+    const loaded = await section.load(book.load.bind(book));
+    let doc: Document | null = null;
+    if (loaded instanceof Document) {
+      doc = loaded;
+    } else if (typeof loaded === 'string') {
+      const parser = new DOMParser();
+      doc = parser.parseFromString(loaded, 'application/xhtml+xml');
+      if (doc.querySelector('parsererror')) {
+        doc = parser.parseFromString(loaded, 'text/html');
       }
-    },
-  };
+    } else if (loaded && typeof loaded === 'object' && 'body' in loaded) {
+      doc = (loaded as unknown as { ownerDocument?: Document }).ownerDocument ?? null;
+    }
+    const rootElement = doc?.body || (loaded instanceof Element ? loaded : null);
+    return {
+      rootElement,
+      unload: () => {
+        try {
+          section.unload();
+        } catch {
+          // Ignore unload errors
+        }
+      },
+    };
+  } catch {
+    return {
+      rootElement: null,
+      unload: () => {
+        try {
+          section.unload();
+        } catch {
+          // Ignore unload errors
+        }
+      },
+    };
+  }
 }
 
 function extractChapterEntriesFromRoot(rootElement: Element): {
@@ -476,8 +498,9 @@ export async function loadChapterSegments(
   const { entries: rawEntries, detectedHeading } = extractChapterEntriesFromRoot(rootElement);
   unload();
 
+  const safeLocale = normalizeBookLocale(locale);
   const replaced = applyReplaceOptionsToEntries(rawEntries, chapterIndex, replaceOptions);
-  const segmented = segmentParagraphs(replaced.entries, locale);
+  const segmented = segmentParagraphs(replaced.entries, safeLocale);
 
   const chapterTitle =
     detectedHeading && replaceOptions && replaceOptions.rules.length > 0

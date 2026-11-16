@@ -267,17 +267,17 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
       role="switch"
       aria-checked={checked}
       onClick={onToggle}
-      className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border px-2.5 text-left text-xs font-medium transition-colors ${
+      className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-2.5 text-left text-xs font-medium transition-colors ${
         checked
-          ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-          : 'border-[var(--nv-border)] bg-[var(--nv-bg)] text-[var(--nv-text)] hover:bg-black/5 dark:hover:bg-white/5'
+          ? 'border-[var(--nv-gold)] bg-[var(--nv-gold)]/15 text-[var(--nv-gold)]'
+          : 'border-[var(--nv-border)] bg-[var(--nv-sheet-card)] text-[var(--nv-text)] hover:brightness-110'
       }`}
     >
       <span
         aria-hidden="true"
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${
           checked
-            ? 'border-[var(--nv-accent)] bg-[var(--nv-accent)] text-white'
+            ? 'border-[var(--nv-ui-accent)] bg-[var(--nv-ui-accent)] text-[var(--nv-ui-accent-text)]'
             : 'border-[var(--nv-muted)]/60'
         }`}
       >
@@ -310,7 +310,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
             ? { maxHeight: `${Math.max(220, viewportBox.height - 16)}px` }
             : { maxHeight: '90vh' }
         }
-        className="flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] text-[var(--nv-text)] shadow-2xl"
+        className="flex w-full max-w-lg flex-col overflow-hidden rounded-xl border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] text-[var(--nv-text)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Row: Selected Text + Defaults Settings Gear + Close */}
@@ -331,7 +331,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                   value={pattern}
                   onChange={(e) => setPattern(e.target.value)}
                   placeholder="Ketik kata, frasa, atau regex..."
-                  className="min-h-[38px] w-full rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-sm font-medium text-[var(--nv-accent)] focus:border-[var(--nv-accent)] focus:outline-none"
+                  className="min-h-[38px] w-full rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 text-sm font-medium text-[var(--nv-gold)] focus:border-[var(--nv-cyan)] focus:outline-none"
                 />
               </div>
             ) : (
@@ -339,14 +339,14 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                 <span className="text-xs font-semibold text-[var(--nv-muted)]">
                   Teks terpilih:
                 </span>
-                <span className="break-words text-sm font-bold text-[var(--nv-accent)]">
+                <span className="break-words text-sm font-bold text-[var(--nv-gold)]">
                   "{pattern}"
                 </span>
                 <button
                   type="button"
                   onClick={() => setEditingPatternInline(true)}
                   aria-label="Ubah teks yang dicari"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[var(--nv-muted)] hover:bg-white/10"
                 >
                   <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
@@ -360,10 +360,10 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
               onClick={() => setShowDefaultsPanel((v) => !v)}
               aria-label="Setelan default ganti teks"
               title="Setelan default ganti teks"
-              className={`inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl transition-colors ${
+              className={`inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg transition-colors ${
                 showDefaultsPanel
-                  ? 'bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                  : 'text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5'
+                  ? 'bg-[var(--nv-gold)]/20 text-[var(--nv-gold)]'
+                  : 'text-[var(--nv-muted)] hover:bg-white/10'
               }`}
             >
               <Settings className="h-4.5 w-4.5" aria-hidden="true" />
@@ -372,7 +372,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
               type="button"
               onClick={onClose}
               aria-label="Tutup dialog ganti teks"
-              className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl text-[var(--nv-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+              className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-[var(--nv-muted)] hover:bg-white/10"
             >
               <X className="h-5 w-5" aria-hidden="true" />
             </button>
@@ -383,8 +383,8 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
           {/* Default Settings Sub-Panel */}
           {showDefaultsPanel && (
-            <div className="space-y-2.5 rounded-xl border border-[var(--nv-accent)]/40 bg-[var(--nv-bg)] p-3 text-xs">
-              <p className="font-bold text-[var(--nv-accent)]">Setelan Default Ganti Teks</p>
+            <div className="space-y-2.5 rounded-lg border border-[var(--nv-cyan)]/40 bg-[var(--nv-sheet-card)] p-3 text-xs">
+              <p className="font-bold text-[var(--nv-cyan)]">Setelan Default Ganti Teks</p>
               <div className="flex items-center justify-between gap-2">
                 <label htmlFor="fr-default-scope" className="text-[var(--nv-muted)]">
                   Cakupan awal:
@@ -395,7 +395,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                   onChange={(e) =>
                     onUpdateDefaults({ defaultScope: e.target.value as ReplaceScope })
                   }
-                  className="min-h-[34px] rounded-lg border border-[var(--nv-border)] bg-[var(--nv-surface)] px-2 text-xs"
+                  className="min-h-[34px] rounded border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] px-2 text-xs"
                 >
                   {ALL_SCOPES.map((sc) => (
                     <option key={sc} value={sc}>
@@ -412,7 +412,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                     onChange={(e) =>
                       onUpdateDefaults({ defaultCaseSensitive: e.target.checked })
                     }
-                    className="accent-[var(--nv-accent)]"
+                    className="accent-[var(--nv-gold)]"
                   />
                   <span>Default Peka Kapital</span>
                 </label>
@@ -423,7 +423,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                     onChange={(e) =>
                       onUpdateDefaults({ defaultWholeWord: e.target.checked })
                     }
-                    className="accent-[var(--nv-accent)]"
+                    className="accent-[var(--nv-gold)]"
                   />
                   <span>Default Kata Utuh</span>
                 </label>
@@ -434,7 +434,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                     onChange={(e) =>
                       onUpdateDefaults({ defaultPreserveCase: e.target.checked })
                     }
-                    className="accent-[var(--nv-accent)]"
+                    className="accent-[var(--nv-gold)]"
                   />
                   <span>Pertahankan Kapital</span>
                 </label>
@@ -443,7 +443,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                     type="checkbox"
                     checked={defaults.applyToToc}
                     onChange={(e) => onUpdateDefaults({ applyToToc: e.target.checked })}
-                    className="accent-[var(--nv-accent)]"
+                    className="accent-[var(--nv-gold)]"
                   />
                   <span>Terapkan ke Daftar Isi</span>
                 </label>
@@ -467,12 +467,12 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                 value={replacement}
                 onChange={(e) => setReplacement(e.target.value)}
                 placeholder="Ketik teks pengganti (kosongkan untuk menghapus)..."
-                className="min-h-[54px] flex-1 resize-y rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 py-2 text-sm focus:border-[var(--nv-accent)] focus:outline-none"
+                className="min-h-[54px] flex-1 resize-y rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 py-2 text-sm focus:border-[var(--nv-cyan)] focus:outline-none"
               />
               <button
                 type="submit"
                 disabled={!canApply}
-                className="min-h-[44px] shrink-0 self-end rounded-xl bg-[var(--nv-accent)] px-4 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-40 whitespace-nowrap"
+                className="min-h-[44px] shrink-0 self-end rounded-lg bg-[var(--nv-ui-accent)] px-4 text-xs font-bold text-[var(--nv-ui-accent-text)] hover:brightness-105 disabled:opacity-40 whitespace-nowrap"
               >
                 Terapkan
               </button>
@@ -516,7 +516,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
           </div>
 
           {ttsOnly && (
-            <p className="rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 py-2 text-[11px] text-[var(--nv-muted)]">
+            <p className="rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 py-2 text-[11px] text-[var(--nv-muted)]">
               Mode <strong>Hanya untuk TTS</strong>: teks di layar tetap asli; hanya pembacaan suara TTS yang diubah tanpa menggeser highlight.
             </p>
           )}
@@ -530,7 +530,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
               id="fr-scope-select"
               value={scope}
               onChange={(e) => setScope(e.target.value as ReplaceScope)}
-              className="min-h-[40px] flex-1 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs font-medium"
+              className="min-h-[40px] flex-1 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 text-xs font-medium"
             >
               {ALL_SCOPES.map((sc) => (
                 <option key={sc} value={sc}>
@@ -541,16 +541,20 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
           </div>
 
           {/* Validation Error OR Live Count + Preview Trigger */}
-          {!validation.valid ? (
+          {!pattern ? (
+            <div className="rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 py-2 text-xs text-[var(--nv-muted)]">
+              Masukkan kata atau pola yang dicari untuk melihat jumlah kecocokan.
+            </div>
+          ) : !validation.valid ? (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+              className="flex items-start gap-2 rounded-lg border border-red-400/50 bg-red-950/40 px-3 py-2 text-xs text-red-200"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
               <span>{validation.error}</span>
             </div>
           ) : (
-            <div className="flex items-center justify-between gap-2 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 py-2">
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 py-2">
               <div className="min-w-0 text-xs">
                 {scanningChapters && !chaptersData ? (
                   <span className="text-[var(--nv-muted)]">Menghitung kemunculan di buku...</span>
@@ -568,7 +572,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                 type="button"
                 disabled={previewResult.items.length === 0}
                 onClick={() => setShowPreview((v) => !v)}
-                className="inline-flex min-h-[34px] shrink-0 items-center gap-1 rounded-lg border border-[var(--nv-border)] px-2.5 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-40 whitespace-nowrap"
+                className="inline-flex min-h-[34px] shrink-0 items-center gap-1 rounded-lg border border-[var(--nv-border)] px-2.5 text-xs font-semibold hover:bg-white/10 disabled:opacity-40 whitespace-nowrap"
               >
                 <Eye className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>{showPreview ? 'Tutup Pratinjau' : 'Pratinjau'}</span>
@@ -578,7 +582,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
 
           {/* Checkable Preview List */}
           {showPreview && previewResult.items.length > 0 && (
-            <div className="max-h-48 space-y-1.5 overflow-y-auto rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-2">
+            <div className="max-h-48 space-y-1.5 overflow-y-auto rounded-lg border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] p-2">
               <p className="px-1 text-[11px] font-medium text-[var(--nv-muted)]">
                 Centang kemunculan yang ingin diganti ({effectiveMatchCount} dipilih):
               </p>
@@ -591,12 +595,12 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                     onClick={() => toggleExcluded(item.key)}
                     className={`flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition-colors ${
                       checked
-                        ? 'border-[var(--nv-border)] bg-[var(--nv-surface)]'
-                        : 'border-transparent opacity-55 hover:bg-black/5 dark:hover:bg-white/5'
+                        ? 'border-[var(--nv-border)] bg-[var(--nv-sheet-bg)]'
+                        : 'border-transparent opacity-55 hover:bg-white/5'
                     }`}
                   >
                     {checked ? (
-                      <CheckSquare className="mt-0.5 h-4 w-4 shrink-0 text-[var(--nv-accent)]" />
+                      <CheckSquare className="mt-0.5 h-4 w-4 shrink-0 text-[var(--nv-gold)]" />
                     ) : (
                       <Square className="mt-0.5 h-4 w-4 shrink-0 text-[var(--nv-muted)]" />
                     )}
@@ -607,7 +611,7 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
                       <p className="line-through decoration-red-500/70 opacity-75">
                         {item.beforeSnippet}
                       </p>
-                      <p className="font-medium text-[var(--nv-accent)]">{item.afterSnippet}</p>
+                      <p className="font-medium text-[var(--nv-gold)]">{item.afterSnippet}</p>
                     </div>
                   </button>
                 );
@@ -621,14 +625,14 @@ export const FindReplacePopup: React.FC<FindReplacePopupProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[42px] rounded-xl border border-[var(--nv-border)] px-4 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 whitespace-nowrap"
+            className="min-h-[42px] rounded-lg border border-[var(--nv-border)] px-4 text-xs font-semibold hover:bg-white/10 whitespace-nowrap"
           >
             Batal
           </button>
           <button
             type="submit"
             disabled={!canApply}
-            className="min-h-[42px] rounded-xl bg-[var(--nv-accent)] px-5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-40 whitespace-nowrap"
+            className="min-h-[42px] rounded-lg bg-[var(--nv-ui-accent)] px-5 text-xs font-bold text-[var(--nv-ui-accent-text)] hover:brightness-105 disabled:opacity-40 whitespace-nowrap"
           >
             Terapkan
           </button>

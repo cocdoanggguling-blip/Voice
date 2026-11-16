@@ -1,6 +1,16 @@
-import React, { useRef, useState } from 'react';
-import { BookmarkPlus, Minus, Plus, Trash2, Upload, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  BookmarkPlus,
+  Minus,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { TARGET_LANGUAGES } from '../services/translationService';
+import { DEFAULT_UI_COLOR } from '../utils/uiTheme';
+import { UiColorCustomizer } from './UiColorCustomizer';
 import type {
   CustomFontRecord,
   OrientationLockMode,
@@ -29,27 +39,27 @@ interface AppearanceSheetProps {
   onClose: () => void;
 }
 
-const BUILTIN_FONTS: Array<{ id: ReaderFont; label: string; cls: string }> = [
-  { id: 'book', label: 'Font Bawaan Buku', cls: 'font-reader-book' },
-  { id: 'alice', label: 'Alice', cls: 'font-reader-alice' },
-  { id: 'literata', label: 'Literata', cls: 'font-reader-literata' },
-  { id: 'merriweather', label: 'Merriweather', cls: 'font-reader-merriweather' },
-  { id: 'lora', label: 'Lora', cls: 'font-reader-lora' },
-  { id: 'roboto', label: 'Roboto', cls: 'font-reader-roboto' },
-  { id: 'noto-serif', label: 'Noto Serif', cls: 'font-reader-noto-serif' },
-  { id: 'open-sans', label: 'Open Sans', cls: 'font-reader-open-sans' },
-  { id: 'atkinson', label: 'Atkinson Hyperlegible', cls: 'font-reader-atkinson' },
-  { id: 'jakarta', label: 'Jakarta Sans', cls: 'font-reader-jakarta' },
-  { id: 'mono', label: 'Monospace', cls: 'font-reader-mono' },
+const BUILTIN_FONTS: Array<{ id: ReaderFont; label: string }> = [
+  { id: 'book', label: 'Font Bawaan Buku' },
+  { id: 'alice', label: 'Alice' },
+  { id: 'literata', label: 'Literata' },
+  { id: 'merriweather', label: 'Merriweather' },
+  { id: 'lora', label: 'Lora' },
+  { id: 'roboto', label: 'Roboto' },
+  { id: 'noto-serif', label: 'Noto Serif' },
+  { id: 'open-sans', label: 'Open Sans' },
+  { id: 'atkinson', label: 'Atkinson Hyperlegible' },
+  { id: 'jakarta', label: 'Jakarta Sans' },
+  { id: 'mono', label: 'Monospace' },
 ];
 
-const THEME_OPTIONS: Array<{ id: ReaderTheme; label: string; style: React.CSSProperties }> = [
-  { id: 'light', label: 'Siang', style: { backgroundColor: '#faf9f6', color: '#1c1917' } },
-  { id: 'dark', label: 'Malam', style: { backgroundColor: '#121417', color: '#e6e3dd' } },
-  { id: 'twilight', label: 'Senja', style: { backgroundColor: '#2b2b2b', color: '#bac7d6' } },
-  { id: 'sepia', label: 'Sepia', style: { backgroundColor: '#f4ecd8', color: '#3b2f23' } },
-  { id: 'amoled', label: 'AMOLED', style: { backgroundColor: '#000000', color: '#e5e5e5' } },
-  { id: 'custom', label: 'Kustom', style: { backgroundColor: '#ede9fe', color: '#3b0764' } },
+const THEME_OPTIONS: Array<{ id: ReaderTheme; label: string }> = [
+  { id: 'light', label: 'Siang' },
+  { id: 'dark', label: 'Malam' },
+  { id: 'twilight', label: 'Senja' },
+  { id: 'sepia', label: 'Sepia' },
+  { id: 'amoled', label: 'AMOLED' },
+  { id: 'custom', label: 'Kustom' },
 ];
 
 export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
@@ -67,10 +77,16 @@ export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
 }) => {
   const fontInputRef = useRef<HTMLInputElement>(null);
   const [presetName, setPresetName] = useState('');
+  const [showGeneral, setShowGeneral] = useState(false);
+
+  useEffect(() => {
+    if (open) setShowGeneral(false);
+  }, [open]);
 
   if (!open) return null;
 
   const linePct = settings.lineHeightPercent || Math.round(settings.lineHeight * 100);
+  const weightRatio = ((settings.fontWeight - 300) / 400) * 100;
 
   const updateLinePercent = (nextPct: number) => {
     const clamped = Math.max(110, Math.min(250, nextPct));
@@ -91,188 +107,136 @@ export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
     });
   };
 
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Setelan Tampilan Bacaan"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-xs sm:items-center sm:p-4"
-      onClick={onClose}
+  const GoldSwitch = ({
+    checked,
+    label,
+    onToggle,
+  }: {
+    checked: boolean;
+    label: string;
+    onToggle: () => void;
+  }) => (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onToggle}
+      className="relative inline-flex h-5 w-10 shrink-0 items-center"
     >
+      <span
+        className={`h-3.5 w-9 rounded-full transition-colors ${
+          checked ? 'bg-[var(--nv-gold)]/55' : 'bg-stone-500/50'
+        }`}
+      />
+      <span
+        className={`absolute h-5 w-5 rounded-full shadow transition-transform ${
+          checked
+            ? 'translate-x-5 bg-[var(--nv-gold)]'
+            : 'translate-x-0 bg-stone-200'
+        }`}
+      />
+    </button>
+  );
+
+  // Full General Settings Screen (when user clicks SETELAN UMUM)
+  if (showGeneral) {
+    return (
       <div
-        className="w-full max-w-xl rounded-t-3xl border border-[var(--nv-border)] bg-[var(--nv-surface)] text-[var(--nv-text)] shadow-2xl sm:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Setelan Umum Tampilan"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 backdrop-blur-xs sm:p-5"
+        onClick={onClose}
       >
-        <div className="mx-auto mt-2.5 h-1.5 w-10 rounded-full bg-[var(--nv-border)] sm:hidden" />
-
-        <div className="flex items-center justify-between border-b border-[var(--nv-border)] px-5 py-3.5">
-          <h2 className="text-base font-bold">Setelan Tampilan</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Tutup setelan tampilan"
-            className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
-          >
-            <X className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="max-h-[78vh] space-y-5 overflow-y-auto p-5 pb-safe">
-          {/* 1. Mode Baca & Animasi Buka Halaman */}
-          <div className="space-y-3">
-            <p className="text-xs font-semibold text-[var(--nv-muted)]">Mode &amp; Membuka Halaman</p>
-            <div className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  { id: 'scroll', label: 'Gulir Vertikal' },
-                  { id: 'paginated', label: 'Per Halaman' },
-                ] as Array<{ id: ReadingMode; label: string }>
-              ).map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => onUpdate({ readingMode: m.id })}
-                  className={`min-h-[42px] rounded-xl border px-3 text-xs font-semibold ${
-                    settings.readingMode === m.id
-                      ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                      : 'border-[var(--nv-border)]'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(
-                [
-                  { id: 'horizontal', label: 'Horizontal' },
-                  { id: 'vertical', label: 'Vertikal' },
-                  { id: 'fade', label: 'Fade' },
-                  { id: 'none', label: 'Tanpa animasi' },
-                ] as Array<{ id: PageAnimationMode; label: string }>
-              ).map((anim) => (
-                <button
-                  key={anim.id}
-                  type="button"
-                  onClick={() => onUpdate({ pageAnimation: anim.id })}
-                  className={`min-h-[38px] rounded-xl border px-2.5 text-xs font-medium whitespace-nowrap ${
-                    settings.pageAnimation === anim.id
-                      ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                      : 'border-[var(--nv-border)]'
-                  }`}
-                >
-                  {anim.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 2. Mode Warna (6 Tema) */}
-          <div className="space-y-2.5">
-            <p className="text-xs font-semibold text-[var(--nv-muted)]">Mode Warna (6 Tema)</p>
-            <div className="grid grid-cols-3 gap-2">
-              {THEME_OPTIONS.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => onUpdate({ theme: t.id })}
-                  style={
-                    t.id === 'custom'
-                      ? { backgroundColor: settings.customBg, color: settings.customText }
-                      : t.style
-                  }
-                  className={`min-h-[44px] rounded-xl border px-3 text-xs font-bold transition-all ${
-                    settings.theme === t.id
-                      ? 'border-[var(--nv-accent)] ring-2 ring-[var(--nv-accent)]'
-                      : 'border-[var(--nv-border)]'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            {settings.theme === 'custom' && (
-              <div className="grid grid-cols-3 gap-3 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-3">
-                <label className="flex flex-col gap-1 text-[11px] text-[var(--nv-muted)]">
-                  <span>Latar</span>
-                  <input
-                    type="color"
-                    value={settings.customBg}
-                    onChange={(e) => onUpdate({ customBg: e.target.value })}
-                    className="h-9 w-full cursor-pointer rounded border border-[var(--nv-border)] bg-transparent"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[11px] text-[var(--nv-muted)]">
-                  <span>Teks</span>
-                  <input
-                    type="color"
-                    value={settings.customText}
-                    onChange={(e) => onUpdate({ customText: e.target.value })}
-                    className="h-9 w-full cursor-pointer rounded border border-[var(--nv-border)] bg-transparent"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[11px] text-[var(--nv-muted)]">
-                  <span>Aksen</span>
-                  <input
-                    type="color"
-                    value={settings.customAccent}
-                    onChange={(e) => onUpdate({ customAccent: e.target.value })}
-                    className="h-9 w-full cursor-pointer rounded border border-[var(--nv-border)] bg-transparent"
-                  />
-                </label>
-              </div>
-            )}
-          </div>
-
-          {/* 3. Muka Font + Impor .ttf/.otf */}
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-[var(--nv-muted)]">
-                Muka Font ({BUILTIN_FONTS.length + customFonts.length})
-              </p>
-              <input
-                ref={fontInputRef}
-                type="file"
-                accept=".ttf,.otf,font/ttf,font/otf"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void onImportCustomFont(file);
-                  e.target.value = '';
-                }}
-                className="hidden"
-              />
+        <div
+          className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-white/10 bg-[var(--nv-sheet-bg)] text-[var(--nv-text)] shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between bg-[var(--nv-teal)] px-2 py-1.5 text-[var(--nv-teal-text)]">
+            <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => fontInputRef.current?.click()}
-                className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-[var(--nv-border)] px-2.5 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 whitespace-nowrap"
+                onClick={() => setShowGeneral(false)}
+                aria-label="Kembali ke setelan cepat"
+                className="inline-flex min-h-[42px] min-w-[42px] items-center justify-center rounded-full hover:bg-white/10"
               >
-                <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Impor .ttf/.otf</span>
+                <ArrowLeft className="h-5 w-5" />
               </button>
+              <h2 className="text-sm font-bold tracking-wide uppercase">Setelan Umum</h2>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Tutup setelan tampilan"
+              className="inline-flex min-h-[42px] min-w-[42px] items-center justify-center rounded-full hover:bg-white/10"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="flex-1 space-y-5 overflow-y-auto p-4 pb-safe">
+            {/* Warna UI Aplikasi (Custom UI Color) */}
+            <div className="rounded-[6px] border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] p-3">
+              <UiColorCustomizer
+                value={settings.uiColor || DEFAULT_UI_COLOR}
+                onChange={(uiColor) => onUpdate({ uiColor })}
+              />
             </div>
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {BUILTIN_FONTS.map((f) => (
+            {/* Mode Baca */}
+            <div>
+              <p className="mb-2 text-xs font-semibold text-[var(--nv-muted)]">Mode Membaca</p>
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    { id: 'scroll', label: 'Gulir Vertikal' },
+                    { id: 'paginated', label: 'Per Halaman' },
+                  ] as Array<{ id: ReadingMode; label: string }>
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => onUpdate({ readingMode: m.id })}
+                    className={`min-h-[40px] rounded-[4px] border px-3 text-xs font-semibold ${
+                      settings.readingMode === m.id
+                        ? 'border-[var(--nv-gold)] bg-[var(--nv-gold)]/15 text-[var(--nv-gold)]'
+                        : 'border-[var(--nv-border)] bg-[var(--nv-sheet-card)]'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Impor Font .ttf/.otf & Custom Fonts */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-[var(--nv-muted)]">
+                  Font Kustom (.ttf / .otf)
+                </p>
+                <input
+                  ref={fontInputRef}
+                  type="file"
+                  accept=".ttf,.otf,font/ttf,font/otf"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void onImportCustomFont(file);
+                    e.target.value = '';
+                  }}
+                  className="hidden"
+                />
                 <button
-                  key={f.id}
                   type="button"
-                  onClick={() => onUpdate({ font: f.id })}
-                  className={`min-h-[40px] rounded-xl border px-2.5 text-xs font-medium truncate ${f.cls} ${
-                    settings.font === f.id
-                      ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                      : 'border-[var(--nv-border)]'
-                  }`}
+                  onClick={() => fontInputRef.current?.click()}
+                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-[4px] bg-[var(--nv-ui-accent)] px-3 text-xs font-bold text-[var(--nv-ui-accent-text)]"
                 >
-                  {f.label}
+                  <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Impor .ttf/.otf</span>
                 </button>
-              ))}
-            </div>
-
-            {customFonts.length > 0 && (
-              <div className="space-y-1.5 pt-1">
-                <p className="text-[11px] font-medium text-[var(--nv-muted)]">Font Impor Anda</p>
+              </div>
+              {customFonts.length > 0 && (
                 <div className="space-y-1.5">
                   {customFonts.map((cf) => {
                     const fontKey: ReaderFont = `custom:${cf.id}`;
@@ -280,17 +244,17 @@ export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
                     return (
                       <div
                         key={cf.id}
-                        className={`flex items-center justify-between rounded-xl border px-3 py-1.5 ${
+                        className={`flex items-center justify-between rounded-[4px] border px-3 py-1.5 ${
                           active
-                            ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)]'
-                            : 'border-[var(--nv-border)]'
+                            ? 'border-[var(--nv-gold)] bg-[var(--nv-gold)]/15'
+                            : 'border-[var(--nv-border)] bg-[var(--nv-sheet-card)]'
                         }`}
                       >
                         <button
                           type="button"
                           onClick={() => onUpdate({ font: fontKey })}
                           style={{ fontFamily: `"${cf.familyName}", serif` }}
-                          className="flex-1 text-left text-sm font-medium truncate"
+                          className="flex-1 truncate text-left text-sm font-medium"
                         >
                           {cf.name}
                         </button>
@@ -298,7 +262,7 @@ export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
                           type="button"
                           onClick={() => void onDeleteCustomFont(cf.id)}
                           aria-label={`Hapus font ${cf.name}`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--nv-muted)] hover:text-red-600"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded text-[var(--nv-muted)] hover:text-red-400"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -306,67 +270,413 @@ export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
                     );
                   })}
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* 4. Ukuran Font (Stepper - / + dengan angka) */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-3">
-              <p className="mb-2 text-xs font-semibold text-[var(--nv-muted)]">Ukuran Font</p>
-              <div className="flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  aria-label="Perkecil ukuran font"
-                  onClick={() => onUpdate({ fontSize: Math.max(12, settings.fontSize - 1) })}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--nv-border)] bg-[var(--nv-surface)]"
-                >
-                  <Minus className="h-4 w-4" />
-                </button>
-                <span className="text-sm font-bold tabular-nums">{settings.fontSize} px</span>
-                <button
-                  type="button"
-                  aria-label="Perbesar ukuran font"
-                  onClick={() => onUpdate({ fontSize: Math.min(36, settings.fontSize + 1) })}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--nv-border)] bg-[var(--nv-surface)]"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
+            {/* Layar Tetap Menyala */}
+            <div className="flex items-center justify-between gap-3 rounded-[4px] bg-[var(--nv-sheet-card)] px-3.5 py-2.5">
+              <div>
+                <p className="text-xs font-semibold">Layar Tetap Menyala</p>
+                <p className="text-[11px] text-[var(--nv-muted)]">
+                  Cegah layar meredup saat membaca
+                </p>
+              </div>
+              <GoldSwitch
+                checked={settings.keepScreenOn}
+                label="Layar Tetap Menyala"
+                onToggle={() => onUpdate({ keepScreenOn: !settings.keepScreenOn })}
+              />
+            </div>
+
+            {/* Margin 4 Sisi & Jarak Paragraf */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-[var(--nv-muted)]">
+                Margin 4 Sisi (px) &amp; Jarak Paragraf
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(
+                  [
+                    { side: 'top', label: 'Atas' },
+                    { side: 'right', label: 'Kanan' },
+                    { side: 'bottom', label: 'Bawah' },
+                    { side: 'left', label: 'Kiri' },
+                  ] as const
+                ).map(({ side, label }) => (
+                  <div
+                    key={side}
+                    className="flex flex-col items-center rounded-[4px] bg-[var(--nv-sheet-card)] p-2"
+                  >
+                    <span className="text-[11px] text-[var(--nv-muted)]">{label}</span>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => updateMargin(side, -4)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--nv-border)]"
+                      >
+                        −
+                      </button>
+                      <span className="w-6 text-center text-xs font-semibold tabular-nums">
+                        {settings.margins[side]}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateMargin(side, 4)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--nv-border)]"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <label htmlFor="para-spacing" className="text-xs font-semibold text-[var(--nv-muted)]">
+                    Jarak Antar Paragraf
+                  </label>
+                  <span className="text-xs font-semibold tabular-nums">
+                    {settings.paragraphSpacingPx} px
+                  </span>
+                </div>
+                <input
+                  id="para-spacing"
+                  type="range"
+                  min={4}
+                  max={32}
+                  step={2}
+                  value={settings.paragraphSpacingPx}
+                  onChange={(e) => onUpdate({ paragraphSpacingPx: Number(e.target.value) })}
+                  className="nv-range nv-range-gold w-full"
+                  style={{
+                    background: `linear-gradient(to right, var(--nv-gold) ${((settings.paragraphSpacingPx - 4) / 28) * 100}%, rgba(150,150,150,0.35) ${((settings.paragraphSpacingPx - 4) / 28) * 100}%)`,
+                    height: '3px',
+                  }}
+                />
+              </div>
+
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-[var(--nv-muted)]">
+                  Kunci Orientasi Layar
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: 'auto', label: 'Otomatis' },
+                      { id: 'portrait', label: 'Potret' },
+                      { id: 'landscape', label: 'Lanskap' },
+                    ] as Array<{ id: OrientationLockMode; label: string }>
+                  ).map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      onClick={() => onUpdate({ orientationLock: o.id })}
+                      className={`min-h-[38px] rounded-[4px] border px-2 text-xs font-medium ${
+                        settings.orientationLock === o.id
+                          ? 'border-[var(--nv-gold)] bg-[var(--nv-gold)]/15 text-[var(--nv-gold)]'
+                          : 'border-[var(--nv-border)] bg-[var(--nv-sheet-card)]'
+                      }`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* 6. Jarak Baris (Stepper %) */}
-            <div className="rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-3">
-              <p className="mb-2 text-xs font-semibold text-[var(--nv-muted)]">Jarak Baris</p>
-              <div className="flex items-center justify-between gap-2">
+            {/* Preset Tampilan */}
+            <div className="space-y-2.5 border-t border-[var(--nv-border)] pt-4">
+              <p className="text-xs font-semibold text-[var(--nv-muted)]">
+                Preset Tampilan Tersimpan
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!presetName.trim()) return;
+                  onSavePreset(presetName.trim());
+                  setPresetName('');
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  type="text"
+                  value={presetName}
+                  onChange={(e) => setPresetName(e.target.value)}
+                  placeholder="Nama preset (mis. Malam Nyaman)..."
+                  className="min-h-[38px] flex-1 rounded-[4px] border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs"
+                />
                 <button
-                  type="button"
-                  aria-label="Kurangi jarak baris"
-                  onClick={() => updateLinePercent(linePct - 10)}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--nv-border)] bg-[var(--nv-surface)]"
+                  type="submit"
+                  className="inline-flex min-h-[38px] items-center gap-1.5 rounded-[4px] bg-[var(--nv-ui-accent)] px-3.5 text-xs font-bold text-[var(--nv-ui-accent-text)] whitespace-nowrap"
                 >
-                  <Minus className="h-4 w-4" />
+                  <BookmarkPlus className="h-3.5 w-3.5" />
+                  <span>Simpan</span>
                 </button>
-                <span className="text-sm font-bold tabular-nums">{linePct}%</span>
-                <button
-                  type="button"
-                  aria-label="Tambah jarak baris"
-                  onClick={() => updateLinePercent(linePct + 10)}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--nv-border)] bg-[var(--nv-surface)]"
+              </form>
+
+              {presets.length > 0 && (
+                <div className="space-y-1.5">
+                  {presets.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-1.5"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onApplyPreset(p)}
+                        className="flex-1 text-left text-xs font-semibold hover:text-[var(--nv-gold)]"
+                      >
+                        {p.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeletePreset(p.id)}
+                        aria-label={`Hapus preset ${p.name}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded text-[var(--nv-muted)] hover:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Terjemahan Langsung */}
+            <div className="space-y-3 border-t border-[var(--nv-border)] pt-4">
+              <p className="text-xs font-semibold text-[var(--nv-muted)]">Terjemahan Langsung</p>
+              <div className="flex items-center justify-between gap-4">
+                <label htmlFor="target-lang-select" className="text-xs font-medium">
+                  Bahasa Tujuan
+                </label>
+                <select
+                  id="target-lang-select"
+                  value={settings.targetLanguage}
+                  onChange={(e) =>
+                    onUpdate({ targetLanguage: e.target.value as TargetLanguageCode })
+                  }
+                  className="min-h-[38px] rounded-[4px] border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 text-xs"
                 >
-                  <Plus className="h-4 w-4" />
-                </button>
+                  {TARGET_LANGUAGES.map((lang) => (
+                    <option key={lang.code} value={lang.code}>
+                      {lang.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center justify-between gap-4">
+                <label htmlFor="provider-select" className="text-xs font-medium">
+                  Penyedia Terjemahan
+                </label>
+                <select
+                  id="provider-select"
+                  value={settings.translationProvider}
+                  onChange={(e) =>
+                    onUpdate({ translationProvider: e.target.value as TranslationProvider })
+                  }
+                  className="min-h-[38px] rounded-[4px] border border-[var(--nv-border)] bg-[var(--nv-sheet-card)] px-3 text-xs"
+                >
+                  <option value="mymemory">MyMemory (Gratis Tanpa Key)</option>
+                  <option value="libretranslate">LibreTranslate</option>
+                </select>
+              </div>
+
+              {settings.translationProvider === 'libretranslate' && (
+                <div>
+                  <label className="mb-1 block text-[11px] text-[var(--nv-muted)]">
+                    Endpoint LibreTranslate
+                  </label>
+                  <input
+                    type="url"
+                    value={settings.libreTranslateUrl}
+                    onChange={(e) => onUpdate({ libreTranslateUrl: e.target.value })}
+                    placeholder="https://libretranslate.com/translate"
+                    className="min-h-[38px] w-full rounded-[4px] border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-4 rounded-[4px] bg-[var(--nv-sheet-card)] px-3.5 py-2.5">
+                <div>
+                  <p className="text-xs font-semibold">Terjemahkan Paragraf</p>
+                  <p className="text-[11px] text-[var(--nv-muted)]">
+                    Tampilkan terjemahan di bawah teks asli saat online
+                  </p>
+                </div>
+                <GoldSwitch
+                  checked={settings.paragraphTranslateEnabled}
+                  label="Aktifkan terjemahan paragraf"
+                  onToggle={() =>
+                    onUpdate({ paragraphTranslateEnabled: !settings.paragraphTranslateEnabled })
+                  }
+                />
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
 
-          {/* 5. Ketebalan Font */}
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <label htmlFor="reader-font-weight" className="text-xs font-semibold text-[var(--nv-muted)]">
-                Ketebalan Font
+  // Primary Floating Top-Right ReadEra Popover (Screenshot cdacc9d9.jpg)
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Setelan Tampilan Bacaan"
+      className="fixed inset-0 z-50 bg-black/30"
+      onClick={onClose}
+    >
+      <div
+        className="fixed right-2 top-12 z-50 max-h-[82vh] w-[calc(100%-1rem)] max-w-[330px] overflow-y-auto rounded-[6px] border border-white/10 bg-[var(--nv-sheet-bg)] p-2 text-[var(--nv-text)] shadow-2xl sm:right-5 sm:top-14"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Cyan Header */}
+        <h2 className="px-2 py-2 text-center text-[11px] font-bold uppercase tracking-wide text-[var(--nv-cyan)]">
+          SETELAN EPUB &amp; TAMPILAN BACAAN
+        </h2>
+
+        <div className="space-y-1.5">
+          {/* 1. MEMBUKA HALAMAN */}
+          <label className="block rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-1.5">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--nv-muted)]">
+              MEMBUKA HALAMAN
+            </span>
+            <select
+              aria-label="Membuka halaman"
+              value={settings.pageAnimation}
+              onChange={(e) => onUpdate({ pageAnimation: e.target.value as PageAnimationMode })}
+              className="mt-0.5 w-full bg-transparent text-sm font-normal focus:outline-none"
+            >
+              <option value="horizontal" className="bg-[var(--nv-sheet-bg)]">
+                Horisontal
+              </option>
+              <option value="vertical" className="bg-[var(--nv-sheet-bg)]">
+                Vertikal
+              </option>
+              <option value="fade" className="bg-[var(--nv-sheet-bg)]">
+                Fade
+              </option>
+              <option value="none" className="bg-[var(--nv-sheet-bg)]">
+                Tanpa animasi
+              </option>
+            </select>
+          </label>
+
+          {/* 2. MODE WARNA */}
+          <label className="block rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-1.5">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--nv-muted)]">
+              MODE WARNA
+            </span>
+            <select
+              aria-label="Mode warna"
+              value={settings.theme}
+              onChange={(e) => onUpdate({ theme: e.target.value as ReaderTheme })}
+              className="mt-0.5 w-full bg-transparent text-sm font-normal focus:outline-none"
+            >
+              {THEME_OPTIONS.map((t) => (
+                <option key={t.id} value={t.id} className="bg-[var(--nv-sheet-bg)]">
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {settings.theme === 'custom' && (
+            <div className="grid grid-cols-3 gap-2 rounded-[4px] bg-[var(--nv-sheet-card)] p-2">
+              <label className="flex flex-col gap-0.5 text-[10px] text-[var(--nv-muted)]">
+                <span>Latar</span>
+                <input
+                  type="color"
+                  value={settings.customBg}
+                  onChange={(e) => onUpdate({ customBg: e.target.value })}
+                  className="h-7 w-full cursor-pointer rounded border border-[var(--nv-border)] bg-transparent"
+                />
               </label>
-              <span className="text-xs font-semibold tabular-nums">{settings.fontWeight}</span>
+              <label className="flex flex-col gap-0.5 text-[10px] text-[var(--nv-muted)]">
+                <span>Teks</span>
+                <input
+                  type="color"
+                  value={settings.customText}
+                  onChange={(e) => onUpdate({ customText: e.target.value })}
+                  className="h-7 w-full cursor-pointer rounded border border-[var(--nv-border)] bg-transparent"
+                />
+              </label>
+              <label className="flex flex-col gap-0.5 text-[10px] text-[var(--nv-muted)]">
+                <span>Aksen</span>
+                <input
+                  type="color"
+                  value={settings.customAccent}
+                  onChange={(e) => onUpdate({ customAccent: e.target.value })}
+                  className="h-7 w-full cursor-pointer rounded border border-[var(--nv-border)] bg-transparent"
+                />
+              </label>
+            </div>
+          )}
+
+          {/* 3. MUKA FONT */}
+          <label className="block rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-1.5">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--nv-muted)]">
+              MUKA FONT
+            </span>
+            <select
+              aria-label="Muka font"
+              value={settings.font}
+              onChange={(e) => onUpdate({ font: e.target.value as ReaderFont })}
+              className="mt-0.5 w-full bg-transparent text-sm font-normal focus:outline-none"
+            >
+              {BUILTIN_FONTS.map((f) => (
+                <option key={f.id} value={f.id} className="bg-[var(--nv-sheet-bg)]">
+                  {f.label}
+                </option>
+              ))}
+              {customFonts.map((cf) => (
+                <option key={cf.id} value={`custom:${cf.id}`} className="bg-[var(--nv-sheet-bg)]">
+                  {cf.name} (Impor)
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {/* 4. UKURAN FONT (- N +) */}
+          <div className="rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-1.5">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--nv-muted)]">
+              UKURAN FONT
+            </span>
+            <div className="mt-1 flex items-center justify-between">
+              <button
+                type="button"
+                aria-label="Perkecil ukuran font"
+                onClick={() => onUpdate({ fontSize: Math.max(12, settings.fontSize - 1) })}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-current/40 hover:bg-white/10"
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </button>
+              <span className="text-sm font-medium tabular-nums">{settings.fontSize}</span>
+              <button
+                type="button"
+                aria-label="Perbesar ukuran font"
+                onClick={() => onUpdate({ fontSize: Math.min(36, settings.fontSize + 1) })}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-current/40 hover:bg-white/10"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* 5. KETEBALAN FONT (Gold Slider) */}
+          <div className="rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-2">
+            <div className="mb-2 flex items-center justify-between">
+              <label
+                htmlFor="reader-font-weight"
+                className="text-[10px] font-semibold uppercase tracking-wide text-[var(--nv-muted)]"
+              >
+                KETEBALAN FONT
+              </label>
+              <span className="text-[11px] text-[var(--nv-muted)] tabular-nums">
+                {settings.fontWeight}
+              </span>
             </div>
             <input
               id="reader-font-weight"
@@ -376,332 +686,95 @@ export const AppearanceSheet: React.FC<AppearanceSheetProps> = ({
               step={100}
               value={settings.fontWeight}
               onChange={(e) => onUpdate({ fontWeight: Number(e.target.value) })}
-              className="h-2 w-full accent-[var(--nv-accent)]"
+              className="nv-range nv-range-gold w-full"
+              style={{
+                background: `linear-gradient(to right, var(--nv-gold) ${weightRatio}%, rgba(180,180,180,0.3) ${weightRatio}%)`,
+                height: '3px',
+              }}
             />
           </div>
 
-          {/* 7. Perataan Teks */}
-          <div>
-            <p className="mb-2 text-xs font-semibold text-[var(--nv-muted)]">Perataan Teks</p>
-            <div className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  { id: 'original', label: 'Asli' },
-                  { id: 'left', label: 'Rata kiri' },
-                  { id: 'justify', label: 'Rata kiri-kanan' },
-                  { id: 'original-hyphen', label: 'Asli + Penggarisan' },
-                ] as Array<{ id: TextAlignMode; label: string }>
-              ).map((al) => (
-                <button
-                  key={al.id}
-                  type="button"
-                  onClick={() => onUpdate({ textAlign: al.id })}
-                  className={`min-h-[40px] rounded-xl border px-3 text-xs font-medium ${
-                    settings.textAlign === al.id
-                      ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                      : 'border-[var(--nv-border)]'
-                  }`}
-                >
-                  {al.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 8 & 9. Tata Letak 2 Halaman & Batas Celah + Layar Tetap Menyala */}
-          <div className="space-y-3 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-3.5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold">Tata Letak 2 Halaman (Layar Lebar)</p>
-                <p className="text-[11px] text-[var(--nv-muted)]">Aktif di tablet / orientasi lanskap</p>
-              </div>
+          {/* 6. SPASI BARIS (- N% +) */}
+          <div className="rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-1.5">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--nv-muted)]">
+              SPASI BARIS
+            </span>
+            <div className="mt-1 flex items-center justify-between">
               <button
                 type="button"
-                role="switch"
-                aria-checked={settings.twoPageSpread}
-                onClick={() => onUpdate({ twoPageSpread: !settings.twoPageSpread })}
-                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                  settings.twoPageSpread ? 'bg-[var(--nv-accent)]' : 'bg-stone-400/50'
-                }`}
+                aria-label="Kurangi jarak baris"
+                onClick={() => updateLinePercent(linePct - 10)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-current/40 hover:bg-white/10"
               >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    settings.twoPageSpread ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
+                <Minus className="h-3.5 w-3.5" />
               </button>
-            </div>
-
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold">Batas Celah Halaman</p>
-                <p className="text-[11px] text-[var(--nv-muted)]">Tampilkan garis pembatas kolom halaman</p>
-              </div>
+              <span className="text-sm font-medium tabular-nums">{linePct}%</span>
               <button
                 type="button"
-                role="switch"
-                aria-checked={settings.pageGapBorder}
-                onClick={() => onUpdate({ pageGapBorder: !settings.pageGapBorder })}
-                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                  settings.pageGapBorder ? 'bg-[var(--nv-accent)]' : 'bg-stone-400/50'
-                }`}
+                aria-label="Tambah jarak baris"
+                onClick={() => updateLinePercent(linePct + 10)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-current/40 hover:bg-white/10"
               >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    settings.pageGapBorder ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold">Layar Tetap Menyala</p>
-                <p className="text-[11px] text-[var(--nv-muted)]">Cegah layar meredup saat membaca</p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={settings.keepScreenOn}
-                onClick={() => onUpdate({ keepScreenOn: !settings.keepScreenOn })}
-                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                  settings.keepScreenOn ? 'bg-[var(--nv-accent)]' : 'bg-stone-400/50'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    settings.keepScreenOn ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
+                <Plus className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
 
-          {/* 10. Margin 4 Sisi, Jarak Paragraf & Orientasi Layar */}
-          <div className="space-y-3">
-            <p className="text-xs font-semibold text-[var(--nv-muted)]">Margin 4 Sisi (px) &amp; Jarak Paragraf</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(
-                [
-                  { side: 'top', label: 'Atas' },
-                  { side: 'right', label: 'Kanan' },
-                  { side: 'bottom', label: 'Bawah' },
-                  { side: 'left', label: 'Kiri' },
-                ] as const
-              ).map(({ side, label }) => (
-                <div
-                  key={side}
-                  className="flex flex-col items-center rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] p-2"
-                >
-                  <span className="text-[11px] text-[var(--nv-muted)]">{label}</span>
-                  <div className="mt-1 flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => updateMargin(side, -4)}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--nv-border)]"
-                    >
-                      −
-                    </button>
-                    <span className="w-6 text-center text-xs font-semibold tabular-nums">
-                      {settings.margins[side]}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => updateMargin(side, 4)}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--nv-border)]"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <label htmlFor="para-spacing" className="text-xs font-semibold text-[var(--nv-muted)]">
-                  Jarak Antar Paragraf
-                </label>
-                <span className="text-xs font-semibold tabular-nums">
-                  {settings.paragraphSpacingPx} px
-                </span>
-              </div>
-              <input
-                id="para-spacing"
-                type="range"
-                min={4}
-                max={32}
-                step={2}
-                value={settings.paragraphSpacingPx}
-                onChange={(e) => onUpdate({ paragraphSpacingPx: Number(e.target.value) })}
-                className="h-2 w-full accent-[var(--nv-accent)]"
-              />
-            </div>
-
-            <div>
-              <p className="mb-1.5 text-xs font-semibold text-[var(--nv-muted)]">Kunci Orientasi Layar</p>
-              <div className="grid grid-cols-3 gap-2">
-                {(
-                  [
-                    { id: 'auto', label: 'Otomatis' },
-                    { id: 'portrait', label: 'Potret' },
-                    { id: 'landscape', label: 'Lanskap' },
-                  ] as Array<{ id: OrientationLockMode; label: string }>
-                ).map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    onClick={() => onUpdate({ orientationLock: o.id })}
-                    className={`min-h-[38px] rounded-xl border px-2 text-xs font-medium ${
-                      settings.orientationLock === o.id
-                        ? 'border-[var(--nv-accent)] bg-[var(--nv-accent-soft)] text-[var(--nv-accent)]'
-                        : 'border-[var(--nv-border)]'
-                    }`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Preset Setelan Tersimpan */}
-          <div className="space-y-2.5 border-t border-[var(--nv-border)] pt-4">
-            <p className="text-xs font-semibold text-[var(--nv-muted)]">Preset Tampilan Tersimpan</p>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!presetName.trim()) return;
-                onSavePreset(presetName.trim());
-                setPresetName('');
-              }}
-              className="flex gap-2"
+          {/* 7. PERATAAN TEKS */}
+          <label className="block rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-1.5">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--nv-muted)]">
+              PERATAAN TEKS
+            </span>
+            <select
+              aria-label="Perataan teks"
+              value={settings.textAlign}
+              onChange={(e) => onUpdate({ textAlign: e.target.value as TextAlignMode })}
+              className="mt-0.5 w-full bg-transparent text-sm font-normal focus:outline-none"
             >
-              <input
-                type="text"
-                value={presetName}
-                onChange={(e) => setPresetName(e.target.value)}
-                placeholder="Nama preset (mis. Malam Nyaman)..."
-                className="min-h-[40px] flex-1 rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs"
-              />
-              <button
-                type="submit"
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[var(--nv-accent)] px-3.5 text-xs font-semibold text-white whitespace-nowrap"
-              >
-                <BookmarkPlus className="h-3.5 w-3.5" />
-                <span>Simpan</span>
-              </button>
-            </form>
+              <option value="original" className="bg-[var(--nv-sheet-bg)]">
+                Asli
+              </option>
+              <option value="left" className="bg-[var(--nv-sheet-bg)]">
+                Rata kiri
+              </option>
+              <option value="justify" className="bg-[var(--nv-sheet-bg)]">
+                Rata kiri-kanan
+              </option>
+              <option value="original-hyphen" className="bg-[var(--nv-sheet-bg)]">
+                Asli + Penggarisan
+              </option>
+            </select>
+          </label>
 
-            {presets.length > 0 && (
-              <div className="space-y-1.5">
-                {presets.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 py-1.5"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onApplyPreset(p)}
-                      className="flex-1 text-left text-xs font-semibold hover:text-[var(--nv-accent)]"
-                    >
-                      {p.name}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeletePreset(p.id)}
-                      aria-label={`Hapus preset ${p.name}`}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--nv-muted)] hover:text-red-600"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+          {/* 8. Tampilan 2 halaman */}
+          <div className="flex items-center justify-between rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-2.5">
+            <span className="text-sm">Tampilan 2 halaman</span>
+            <GoldSwitch
+              checked={settings.twoPageSpread}
+              label="Tampilan 2 halaman"
+              onToggle={() => onUpdate({ twoPageSpread: !settings.twoPageSpread })}
+            />
           </div>
 
-          {/* Terjemahan Langsung Settings */}
-          <div className="space-y-3 border-t border-[var(--nv-border)] pt-4">
-            <p className="text-xs font-semibold text-[var(--nv-muted)]">Terjemahan Langsung</p>
-            <div className="flex items-center justify-between gap-4">
-              <label htmlFor="target-lang-select" className="text-xs font-medium">
-                Bahasa Tujuan
-              </label>
-              <select
-                id="target-lang-select"
-                value={settings.targetLanguage}
-                onChange={(e) => onUpdate({ targetLanguage: e.target.value as TargetLanguageCode })}
-                className="min-h-[40px] rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs"
-              >
-                {TARGET_LANGUAGES.map((lang) => (
-                  <option key={lang.code} value={lang.code}>
-                    {lang.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center justify-between gap-4">
-              <label htmlFor="provider-select" className="text-xs font-medium">
-                Penyedia Terjemahan
-              </label>
-              <select
-                id="provider-select"
-                value={settings.translationProvider}
-                onChange={(e) =>
-                  onUpdate({ translationProvider: e.target.value as TranslationProvider })
-                }
-                className="min-h-[40px] rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs"
-              >
-                <option value="mymemory">MyMemory (Gratis Tanpa Key)</option>
-                <option value="libretranslate">LibreTranslate</option>
-              </select>
-            </div>
-
-            {settings.translationProvider === 'libretranslate' && (
-              <div>
-                <label className="mb-1 block text-[11px] text-[var(--nv-muted)]">
-                  Endpoint LibreTranslate
-                </label>
-                <input
-                  type="url"
-                  value={settings.libreTranslateUrl}
-                  onChange={(e) => onUpdate({ libreTranslateUrl: e.target.value })}
-                  placeholder="https://libretranslate.com/translate"
-                  className="min-h-[38px] w-full rounded-xl border border-[var(--nv-border)] bg-[var(--nv-bg)] px-3 text-xs"
-                />
-              </div>
-            )}
-
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold">Terjemahkan Paragraf</p>
-                <p className="text-[11px] text-[var(--nv-muted)]">
-                  Tampilkan terjemahan di bawah teks asli saat online
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={settings.paragraphTranslateEnabled}
-                aria-label="Aktifkan terjemahan paragraf"
-                onClick={() =>
-                  onUpdate({ paragraphTranslateEnabled: !settings.paragraphTranslateEnabled })
-                }
-                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                  settings.paragraphTranslateEnabled ? 'bg-[var(--nv-accent)]' : 'bg-stone-400/50'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    settings.paragraphTranslateEnabled ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
+          {/* 9. Batas jarak halaman */}
+          <div className="flex items-center justify-between rounded-[4px] bg-[var(--nv-sheet-card)] px-3 py-2.5">
+            <span className="text-sm">Batas jarak halaman</span>
+            <GoldSwitch
+              checked={settings.pageGapBorder}
+              label="Batas jarak halaman"
+              onToggle={() => onUpdate({ pageGapBorder: !settings.pageGapBorder })}
+            />
           </div>
         </div>
+
+        {/* Footer: SETELAN UMUM */}
+        <button
+          type="button"
+          onClick={() => setShowGeneral(true)}
+          className="mt-1.5 flex min-h-[42px] w-full items-center justify-center rounded-[4px] text-xs font-bold tracking-wider uppercase hover:bg-white/5"
+        >
+          SETELAN UMUM
+        </button>
       </div>
     </div>
   );

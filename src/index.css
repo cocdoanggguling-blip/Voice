@@ -7,10 +7,29 @@
     --nv-surface: #ffffff;
     --nv-text: #1c1917;
     --nv-muted: #68635e;
-    --nv-border: rgba(28, 25, 23, 0.1);
-    --nv-accent: #b45309;
-    --nv-accent-soft: rgba(180, 83, 9, 0.12);
-    --nv-word-highlight: rgba(217, 119, 6, 0.28);
+    --nv-border: rgba(28, 25, 23, 0.12);
+    --nv-accent: #067d92;
+    --nv-accent-soft: rgba(6, 182, 212, 0.2);
+
+    /* Chrome & App Shell Tokens (Default Cyan) */
+    --nv-teal: #058094;
+    --nv-teal-deep: #046473;
+    --nv-teal-text: #ffffff;
+    --nv-gold: #067d92;
+    --nv-cyan: #067d92;
+    --nv-ui-accent: #067d92;
+    --nv-ui-accent-text: #ffffff;
+    --nv-ui-bar-highlight: #67e8f9;
+    --nv-ui-bar-highlight-text: #07171c;
+    --nv-chrome-bg: #eef5f7;
+    --nv-chrome-card: #ffffff;
+    --nv-chrome-text: #102026;
+    --nv-chrome-muted: #5a7078;
+    --nv-chrome-border: rgba(16, 32, 38, 0.12);
+    --nv-sheet-bg: #ffffff;
+    --nv-sheet-card: #f1f5f7;
+    --nv-sheet-row: #f7fafb;
+    --nv-sheet-row-active: rgba(6, 182, 212, 0.14);
   }
 
   .theme-sepia {
@@ -18,33 +37,87 @@
     --nv-surface: #fbf6ea;
     --nv-text: #3b2f23;
     --nv-muted: #72604d;
-    --nv-border: rgba(59, 47, 35, 0.12);
-    --nv-accent: #9a3412;
-    --nv-accent-soft: rgba(154, 52, 18, 0.11);
-    --nv-word-highlight: rgba(194, 65, 12, 0.24);
+    --nv-border: rgba(59, 47, 35, 0.14);
+    --nv-accent: #067d92;
+    --nv-accent-soft: rgba(6, 182, 212, 0.2);
+
+    --nv-teal: #058094;
+    --nv-teal-deep: #046473;
+    --nv-teal-text: #ffffff;
+    --nv-gold: #067d92;
+    --nv-cyan: #067d92;
+    --nv-ui-accent: #067d92;
+    --nv-ui-accent-text: #ffffff;
+    --nv-ui-bar-highlight: #67e8f9;
+    --nv-ui-bar-highlight-text: #07171c;
+    --nv-chrome-bg: #efe6d0;
+    --nv-chrome-card: #faf4e4;
+    --nv-chrome-text: #3b2f23;
+    --nv-chrome-muted: #72604d;
+    --nv-chrome-border: rgba(59, 47, 35, 0.14);
+    --nv-sheet-bg: #fbf6ea;
+    --nv-sheet-card: #efe5ce;
+    --nv-sheet-row: #f5ecd7;
+    --nv-sheet-row-active: rgba(6, 182, 212, 0.14);
   }
 
   :root.theme-dark,
   :root.dark {
     --nv-bg: #121417;
-    --nv-surface: #1a1d22;
+    --nv-surface: #1e2126;
     --nv-text: #e6e3dd;
     --nv-muted: #989b9f;
-    --nv-border: rgba(230, 227, 221, 0.1);
-    --nv-accent: #f59e0b;
-    --nv-accent-soft: rgba(245, 158, 11, 0.14);
-    --nv-word-highlight: rgba(245, 158, 11, 0.34);
+    --nv-border: rgba(230, 227, 221, 0.12);
+    --nv-accent: #22d3ee;
+    --nv-accent-soft: rgba(34, 211, 238, 0.25);
+
+    --nv-teal: #058094;
+    --nv-teal-deep: #046473;
+    --nv-teal-text: #ffffff;
+    --nv-gold: #22d3ee;
+    --nv-cyan: #38e0f5;
+    --nv-ui-accent: #22d3ee;
+    --nv-ui-accent-text: #07171c;
+    --nv-ui-bar-highlight: #67e8f9;
+    --nv-ui-bar-highlight-text: #07171c;
+    --nv-chrome-bg: #0a1f26;
+    --nv-chrome-card: #132d36;
+    --nv-chrome-text: #eaf1f3;
+    --nv-chrome-muted: #8aa0a8;
+    --nv-chrome-border: rgba(148, 184, 196, 0.14);
+    --nv-sheet-bg: #24262a;
+    --nv-sheet-card: #33363b;
+    --nv-sheet-row: #2b2e33;
+    --nv-sheet-row-active: #394b52;
   }
 
   :root.theme-twilight {
-    --nv-bg: #2b2b2b;
-    --nv-surface: #353538;
-    --nv-text: #bac7d6;
-    --nv-muted: #8b9bb0;
-    --nv-border: rgba(186, 199, 214, 0.14);
-    --nv-accent: #eab308;
-    --nv-accent-soft: rgba(234, 179, 8, 0.15);
-    --nv-word-highlight: rgba(234, 179, 8, 0.3);
+    --nv-bg: #242424;
+    --nv-surface: #2e2e30;
+    --nv-text: #c9cdd2;
+    --nv-muted: #8b949e;
+    --nv-border: rgba(255, 255, 255, 0.12);
+    --nv-accent: #22d3ee;
+    --nv-accent-soft: rgba(34, 211, 238, 0.25);
+
+    --nv-teal: #058094;
+    --nv-teal-deep: #046473;
+    --nv-teal-text: #ffffff;
+    --nv-gold: #22d3ee;
+    --nv-cyan: #38e0f5;
+    --nv-ui-accent: #22d3ee;
+    --nv-ui-accent-text: #07171c;
+    --nv-ui-bar-highlight: #67e8f9;
+    --nv-ui-bar-highlight-text: #07171c;
+    --nv-chrome-bg: #0a1f26;
+    --nv-chrome-card: #132d36;
+    --nv-chrome-text: #eaf1f3;
+    --nv-chrome-muted: #8aa0a8;
+    --nv-chrome-border: rgba(148, 184, 196, 0.14);
+    --nv-sheet-bg: #2a2b2f;
+    --nv-sheet-card: #393b40;
+    --nv-sheet-row: #303237;
+    --nv-sheet-row-active: #3c4f57;
   }
 
   :root.theme-amoled {
@@ -53,9 +126,27 @@
     --nv-text: #e5e5e5;
     --nv-muted: #8b8d94;
     --nv-border: rgba(255, 255, 255, 0.12);
-    --nv-accent: #f59e0b;
-    --nv-accent-soft: rgba(245, 158, 11, 0.16);
-    --nv-word-highlight: rgba(245, 158, 11, 0.34);
+    --nv-accent: #22d3ee;
+    --nv-accent-soft: rgba(34, 211, 238, 0.25);
+
+    --nv-teal: #046878;
+    --nv-teal-deep: #03434d;
+    --nv-teal-text: #ffffff;
+    --nv-gold: #22d3ee;
+    --nv-cyan: #38e0f5;
+    --nv-ui-accent: #22d3ee;
+    --nv-ui-accent-text: #07171c;
+    --nv-ui-bar-highlight: #67e8f9;
+    --nv-ui-bar-highlight-text: #07171c;
+    --nv-chrome-bg: #000000;
+    --nv-chrome-card: #0c181d;
+    --nv-chrome-text: #eceff1;
+    --nv-chrome-muted: #8b9499;
+    --nv-chrome-border: rgba(255, 255, 255, 0.12);
+    --nv-sheet-bg: #141416;
+    --nv-sheet-card: #222226;
+    --nv-sheet-row: #18181b;
+    --nv-sheet-row-active: #243b42;
   }
 
   body {
@@ -64,6 +155,57 @@
     color: var(--nv-text);
     -webkit-tap-highlight-color: transparent;
   }
+}
+
+/* Crisp Material-style Range Inputs */
+.nv-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.nv-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 9999px;
+}
+.nv-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  margin-top: -5.5px;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.nv-range::-moz-range-track {
+  height: 3px;
+  border-radius: 9999px;
+}
+.nv-range::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.nv-range-cyan::-webkit-slider-thumb {
+  background-color: var(--nv-ui-bar-highlight);
+}
+.nv-range-cyan::-moz-range-thumb {
+  background-color: var(--nv-ui-bar-highlight);
+}
+.nv-range-gold::-webkit-slider-thumb {
+  background-color: var(--nv-ui-accent);
+}
+.nv-range-gold::-moz-range-thumb {
+  background-color: var(--nv-ui-accent);
+}
+.nv-range-grey::-webkit-slider-thumb {
+  background-color: #9ca3af;
+}
+.nv-range-grey::-moz-range-thumb {
+  background-color: #9ca3af;
 }
 
 .font-reader-book {
@@ -103,17 +245,6 @@
 .tts-sentence-active {
   background-color: var(--nv-accent-soft);
   border-radius: 4px;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-}
-
-.tts-word-active {
-  background-color: var(--nv-word-highlight);
-  border-radius: 3px;
-  text-decoration: underline;
-  text-decoration-color: var(--nv-accent);
-  text-decoration-thickness: 2px;
-  text-underline-offset: 3px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }

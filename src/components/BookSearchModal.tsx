@@ -62,30 +62,30 @@ export const BookSearchModal: React.FC<BookSearchModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-label="Cari dalam buku"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-3 pt-12 backdrop-blur-xs sm:p-6"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-3 pt-10 backdrop-blur-xs sm:p-6"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[82vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-[var(--nv-border)] bg-[var(--nv-surface)] text-[var(--nv-text)] shadow-2xl"
+        className="flex max-h-[82vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-[var(--nv-border)] bg-[var(--nv-sheet-bg)] text-[var(--nv-text)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <form
           onSubmit={(e) => void runSearch(e)}
-          className="flex items-center gap-2 border-b border-[var(--nv-border)] px-3 py-2.5"
+          className="flex items-center gap-2 bg-[var(--nv-teal)] px-3 py-2 text-[var(--nv-teal-text)]"
         >
-          <Search className="h-4 w-4 shrink-0 text-[var(--nv-muted)]" aria-hidden="true" />
+          <Search className="h-4 w-4 shrink-0 text-[var(--nv-teal-text)]/80" aria-hidden="true" />
           <input
             type="search"
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Cari kata atau frasa di seluruh bab..."
-            className="min-h-[42px] flex-1 bg-transparent text-sm focus:outline-none"
+            className="min-h-[42px] flex-1 bg-transparent text-sm text-[var(--nv-teal-text)] placeholder:text-[var(--nv-teal-text)]/60 focus:outline-none"
           />
           <button
             type="submit"
             disabled={searching || query.trim().length < 2}
-            className="min-h-[38px] rounded-xl bg-[var(--nv-accent)] px-3.5 text-xs font-semibold text-white disabled:opacity-40 whitespace-nowrap shrink-0"
+            className="min-h-[36px] rounded-lg bg-[var(--nv-ui-bar-highlight)] px-3.5 text-xs font-bold text-[var(--nv-ui-bar-highlight-text)] hover:brightness-105 disabled:opacity-40 whitespace-nowrap shrink-0"
           >
             {searching ? 'Mencari...' : 'Cari'}
           </button>
@@ -93,7 +93,7 @@ export const BookSearchModal: React.FC<BookSearchModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Tutup pencarian buku"
-            className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+            className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-[var(--nv-teal-text)] hover:bg-white/10"
           >
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
@@ -122,9 +122,9 @@ export const BookSearchModal: React.FC<BookSearchModalProps> = ({
                   onSelectMatch(hit.chapterIndex, hit.charOffset);
                   onClose();
                 }}
-                className="flex w-full flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                className="flex w-full flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-white/5"
               >
-                <span className="text-xs font-semibold text-[var(--nv-accent)]">
+                <span className="text-xs font-semibold text-[var(--nv-gold)]">
                   Bab {hit.chapterIndex + 1} · {hit.chapterTitle}
                 </span>
                 <span className="text-sm leading-relaxed text-[var(--nv-text)]">
